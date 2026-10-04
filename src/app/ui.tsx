@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { InvoiceStatus } from "../invoice/types.ts";
+import type { InvoiceStatus, PaymentStatus, ResolvedInvoice } from "../invoice/types.ts";
 
 export function StatusBadge({ status, invalid }: { status: InvoiceStatus; invalid?: boolean }) {
   const [label, tone] = invalid
@@ -8,6 +8,52 @@ export function StatusBadge({ status, invalid }: { status: InvoiceStatus; invali
       ? ["Draft", "bg-amber-50 text-amber-800 ring-amber-200"]
       : ["Final", "bg-emerald-50 text-emerald-800 ring-emerald-200"];
   return <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset ${tone}`}>{label}</span>;
+}
+
+const PAYMENT_LABELS: Record<PaymentStatus, string | undefined> = {
+  unpaid: undefined,
+  partial: "Partly paid",
+  paid: "Paid",
+};
+
+export function PaymentBadge({ payment }: { payment: PaymentStatus }) {
+  const label = PAYMENT_LABELS[payment];
+  if (!label) return null;
+  const tone = payment === "paid" ? "bg-sky-50 text-sky-800 ring-sky-200" : "bg-violet-50 text-violet-800 ring-violet-200";
+  return (
+    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap ring-1 ring-inset ${tone}`}>
+      {label}
+    </span>
+  );
+}
+
+/** Switches between an invoice and its receipts. Shows nothing until there is a receipt. */
+export function DocumentTabs({
+  invoice,
+  selectedId,
+  onSelect,
+}: {
+  invoice: ResolvedInvoice;
+  selectedId: string;
+  onSelect: (id: string) => void;
+}) {
+  if (invoice.receipts.length === 0) return null;
+  return (
+    <div className="mb-4 flex w-fit flex-wrap rounded-md bg-black/[0.05] p-0.5 text-[13px] font-medium" role="tablist">
+      {[invoice, ...invoice.receipts].map((doc, i) => (
+        <button
+          key={doc.id}
+          type="button"
+          role="tab"
+          aria-selected={doc.id === selectedId}
+          onClick={() => onSelect(doc.id)}
+          className="rounded px-3 py-1 text-muted aria-selected:bg-white aria-selected:text-ink aria-selected:shadow-sm"
+        >
+          {doc.kind === "invoice" ? "Invoice" : `Receipt ${doc.number ?? i}`}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export function Errors({ title, intro, errors }: { title: string; intro?: ReactNode; errors: string[] }) {

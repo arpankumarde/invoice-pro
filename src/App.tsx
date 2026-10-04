@@ -7,9 +7,11 @@ import { downloadPdf } from "./app/generate.ts";
 import { PdfPreview } from "./app/PdfPreview.tsx";
 import {
   Code,
+  DocumentTabs,
   DownloadIcon,
   Errors,
   PageSkeleton,
+  PaymentBadge,
   PencilIcon,
   PlusIcon,
   primaryButton,
@@ -22,7 +24,8 @@ import type { InvoiceEntry, InvoiceStatus } from "./invoice/types.ts";
 type Mode = "invoices" | "editor";
 interface Route {
   mode: Mode;
-  invoiceId?: string;
+  /** An invoice id, or a receipt id such as "INV-2026-10-0001/receipt-1". */
+  documentId?: string;
   editTarget: EditTarget;
 }
 
@@ -33,12 +36,12 @@ function readHash(): Route {
   const target = value.startsWith(EDIT_PREFIX) ? parseTargetKey(value.slice(EDIT_PREFIX.length)) : undefined;
   return target
     ? { mode: "editor", editTarget: target }
-    : { mode: "invoices", invoiceId: value || undefined, editTarget: { kind: "invoice" } };
+    : { mode: "invoices", documentId: value || undefined, editTarget: { kind: "invoice" } };
 }
 
 function writeHash(route: Route) {
   const hash =
-    route.mode === "editor" ? `${EDIT_PREFIX}${targetKey(route.editTarget)}` : (route.invoiceId ?? "");
+    route.mode === "editor" ? `${EDIT_PREFIX}${targetKey(route.editTarget)}` : (route.documentId ?? "");
   window.history.replaceState(null, "", hash ? `#${encodeURIComponent(hash)}` : window.location.pathname);
 }
 
@@ -46,6 +49,8 @@ const entryStatus = (entry: InvoiceEntry): InvoiceStatus => (entry.ok ? entry.in
 const entryTitle = (entry: InvoiceEntry) => (entry.ok ? entry.invoice.number : entry.number) ?? entry.id;
 const sortKey = (entry: InvoiceEntry) => (entry.ok ? entry.invoice.summary.sortKey : `0000 ${entry.id}`);
 const joinParts = (...parts: (string | undefined)[]) => parts.filter(Boolean).join(" · ");
+/** Receipt ids are their invoice's id plus "/receipt-<n>". */
+const invoiceIdOf = (documentId?: string) => documentId?.split("/")[0];
 
 export default function App() {
   const data = useInvoiceData();
@@ -84,6 +89,7 @@ function Workspace({ snapshot }: { snapshot: Snapshot }) {
   };
 
   const sorted = [...snapshot.entries].sort((a, b) => sortKey(b).localeCompare(sortKey(a)));
+  const invoiceId = invoiceIdOf(route.documentId);
 
   return (
     <div className="flex min-h-dvh flex-col bg-canvas text-ink md:h-dvh md:flex-row md:overflow-hidden">
@@ -106,7 +112,7 @@ function Workspace({ snapshot }: { snapshot: Snapshot }) {
         </div>
         <nav className="flex-1 overflow-y-auto px-3 pb-3 max-md:max-h-72">
           {route.mode === "invoices" ? (
-            <InvoiceNav entries={sorted} selectedId={route.invoiceId} onSelect={(invoiceId) => navigate({ invoiceId })} />
+            <InvoiceNav entries={sorted} selectedId={invoiceId} onSelect={(documentId) => navigate({ documentId })} />
           ) : (
             <EditorNav
               snapshot={snapshot}
@@ -134,7 +140,9 @@ function Workspace({ snapshot }: { snapshot: Snapshot }) {
         ) : (
           <InvoiceView
             snapshot={snapshot}
-            entry={sorted.find((entry) => entry.id === route.invoiceId) ?? sorted[0]}
+            entry={sorted.find((entry) => entry.id === invoiceId) ?? sorted[0]}
+            documentId={route.documentId}
+            onSelectDocument={(documentId) => navigate({ documentId })}
             onEdit={(file) => navigate({ mode: "editor", editTarget: { kind: "invoice", file } })}
             onCreate={() => navigate({ mode: "editor", editTarget: { kind: "invoice" } })}
           />
@@ -161,12 +169,15 @@ function NavItem({
   title,
   aside,
   subtitle,
+  badge,
 }: {
   active: boolean;
   onClick: () => void;
   title: ReactNode;
   aside?: ReactNode;
   subtitle?: ReactNode;
+  /** Shown under `aside`, at the end of the subtitle line. */
+  badge?: ReactNode;
 }) {
   return (
     <li>
@@ -180,7 +191,12 @@ function NavItem({
           <span className="flex min-w-0 items-center gap-1.5 truncate text-[13px] font-medium">{title}</span>
           {aside && <span className="text-[13px] tabular-nums">{aside}</span>}
         </span>
-        {subtitle && <span className="mt-0.5 block truncate text-xs text-muted">{subtitle}</span>}
+        {(subtitle || badge) && (
+          <span className="mt-0.5 flex items-center justify-between gap-3">
+            <span className="min-w-0 truncate text-xs text-muted">{subtitle}</span>
+            {badge}
+          </span>
+        )}
       </button>
     </li>
   );
@@ -210,6 +226,7 @@ function InvoiceNav({
                 onClick={() => onSelect(entry.id)}
                 title={entryTitle(entry)}
                 aside={entry.ok && entry.invoice.summary.amountDue}
+                badge={entry.ok && <PaymentBadge payment={entry.invoice.summary.payment} />}
                 subtitle={
                   entry.ok ? (
                     joinParts(entry.invoice.summary.customer, entry.invoice.summary.issueDate) || " "
@@ -284,16 +301,22 @@ function EditorNav({
 function InvoiceView({
   snapshot,
   entry,
+  documentId,
+  onSelectDocument,
   onEdit,
   onCreate,
 }: {
   snapshot: Snapshot;
   entry?: InvoiceEntry;
+  documentId?: string;
+  onSelectDocument: (documentId: string) => void;
   onEdit: (file: string) => void;
   onCreate: () => void;
 }) {
   const invoice = entry?.ok ? entry.invoice : undefined;
-  const pdf = usePdf(invoice, snapshot.images);
+  // The invoice itself, or the receipt picked in the tabs.
+  const doc = invoice?.receipts.find((receipt) => receipt.id === documentId) ?? invoice;
+  const pdf = usePdf(doc, snapshot.images);
 
   if (!entry) {
     return (
@@ -318,9 +341,10 @@ function InvoiceView({
             <div className="flex items-center gap-2.5">
               <h2 className="truncate text-lg font-semibold">{entryTitle(entry)}</h2>
               <StatusBadge status={entryStatus(entry)} invalid={!entry.ok} />
+              {invoice && <PaymentBadge payment={invoice.summary.payment} />}
             </div>
             <p className="mt-0.5 truncate text-[13px] text-muted">
-              {invoice ? joinParts(invoice.summary.customer, invoice.headline) : entry.file}
+              {invoice && doc ? joinParts(invoice.summary.customer, doc.headline) : entry.file}
             </p>
           </div>
           <div className="flex gap-2">
@@ -331,11 +355,11 @@ function InvoiceView({
             <button
               type="button"
               disabled={!pdf.bytes}
-              onClick={() => invoice && pdf.bytes && downloadPdf(pdf.bytes, invoice.fileName)}
+              onClick={() => doc && pdf.bytes && downloadPdf(pdf.bytes, doc.fileName)}
               className={primaryButton}
             >
               <DownloadIcon />
-              {invoice?.status === "draft" ? "Download draft" : "Download PDF"}
+              {doc?.status === "draft" ? "Download draft" : "Download PDF"}
             </button>
           </div>
         </div>
@@ -356,9 +380,10 @@ function InvoiceView({
         {pdf.error && (
           <p className="mb-6 rounded-lg bg-red-50 p-4 text-sm text-red-800">Could not build the PDF: {pdf.error}</p>
         )}
-        {invoice &&
+        {invoice && doc && <DocumentTabs invoice={invoice} selectedId={doc.id} onSelect={onSelectDocument} />}
+        {doc &&
           (pdf.previewBytes ? (
-            <PdfPreview bytes={pdf.previewBytes} label={entryTitle(entry)} />
+            <PdfPreview bytes={pdf.previewBytes} label={doc.number ?? entryTitle(entry)} />
           ) : (
             !pdf.error && <PageSkeleton />
           ))}

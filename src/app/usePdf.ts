@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import type { ResolvedInvoice } from "../invoice/types.ts";
+import type { ResolvedDocument } from "../invoice/types.ts";
 import { generatePdf } from "./generate.ts";
 
-/** Builds the PDF for an invoice whenever it changes. */
-export function usePdf(invoice: ResolvedInvoice | undefined, images: Record<string, string>) {
-  const [result, setResult] = useState<{ invoice: ResolvedInvoice; bytes?: Uint8Array<ArrayBuffer>; error?: string }>();
+/** Builds the PDF for an invoice or receipt whenever it changes. */
+export function usePdf(invoice: ResolvedDocument | undefined, images: Record<string, string>) {
+  const [result, setResult] = useState<{ invoice: ResolvedDocument; bytes?: Uint8Array<ArrayBuffer>; error?: string }>();
 
   useEffect(() => {
     if (!invoice) return;

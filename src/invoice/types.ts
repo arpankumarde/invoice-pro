@@ -68,11 +68,26 @@ export interface TotalRow {
   strong?: boolean;
 }
 
-/** Everything the PDF renderer needs, already validated and formatted. */
-export interface ResolvedInvoice {
+/** A row of a receipt's "Payment history". Empty strings leave the cell blank. */
+export interface PaymentRow {
+  method: string;
+  /** Small print under the method, e.g. a UTR or transaction reference. */
+  details: string[];
+  date: string;
+  amount: string;
+  receiptNumber: string;
+}
+
+/** Everything the PDF renderer needs for an invoice or one of its receipts, already validated and formatted. */
+export interface ResolvedDocument {
+  kind: "invoice" | "receipt";
+  /** Unique across the folder: the invoice file's name, plus "/receipt-<n>" for its receipts. */
   id: string;
+  /** The invoice file, also for receipts. */
   file: string;
+  /** Receipts take their invoice's status. */
   status: InvoiceStatus;
+  /** Invoice number, or receipt number on a receipt. */
   number?: string;
   fileName: string;
   settings: Settings;
@@ -90,14 +105,27 @@ export interface ResolvedInvoice {
   hasTaxColumn: boolean;
   items: LineItem[];
   totals: TotalRow[];
+  /** Receipts: the payments made so far, this receipt's last. Empty on invoices. */
+  payments: PaymentRow[];
   footnotes: string[];
   footer?: string;
+}
+
+export type PaymentStatus = "unpaid" | "partial" | "paid";
+
+export interface ResolvedInvoice extends ResolvedDocument {
+  kind: "invoice";
+  /** One per payment, in the order they were made. */
+  receipts: ResolvedDocument[];
   summary: {
     customer?: string;
     amountDue: string;
     issueDate?: string;
     /** ISO date, for sorting. */
     sortKey: string;
+    payment: PaymentStatus;
+    /** The invoice total in currency units (not minor units), e.g. to prefill a payment. */
+    total: number;
   };
 }
 

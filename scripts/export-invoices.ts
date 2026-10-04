@@ -1,12 +1,14 @@
-// Renders invoices from server/src/data to out/*.pdf without the browser or the data server.
-//   pnpm pdf                  every valid invoice
-//   pnpm pdf INV-2026-0001    only the named invoices (file name or invoice number)
+// Renders invoices and their receipts from server/src/data to out/*.pdf without the browser or
+// the data server.
+//   pnpm pdf                     every valid invoice and its receipts
+//   pnpm pdf INV-2026-10-0001    only the named invoices (file name or invoice number) and their receipts
+//   pnpm pdf RCT-2026-10-0001    only the named receipts
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveAll } from "../src/invoice/resolve.ts";
-import type { DataSet } from "../src/invoice/types.ts";
-import { renderInvoicePdf } from "../src/pdf/render.ts";
+import type { DataSet, InvoiceEntry } from "../src/invoice/types.ts";
+import { renderPdf } from "../src/pdf/render.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const dataDir = join(root, "server", "src", "data");
@@ -42,11 +44,13 @@ const fonts = {
 };
 
 const wanted = process.argv.slice(2);
-const entries = resolveAll(dataSet).filter(
-  (entry) => wanted.length === 0 || wanted.includes(entry.id) || (entry.ok && wanted.includes(entry.invoice.number ?? "")),
-);
+const isWanted = (entry: InvoiceEntry) =>
+  wanted.length === 0 || wanted.includes(entry.id) || (entry.ok && wanted.includes(entry.invoice.number ?? ""));
+const wantedReceipts = (entry: InvoiceEntry) =>
+  entry.ok ? entry.invoice.receipts.filter((receipt) => wanted.includes(receipt.number ?? "")) : [];
+const entries = resolveAll(dataSet).filter((entry) => isWanted(entry) || wantedReceipts(entry).length > 0);
 if (entries.length === 0) {
-  console.error(wanted.length ? `No invoice matches ${wanted.join(", ")}` : "No invoices in server/src/data/invoices");
+  console.error(wanted.length ? `Nothing matches ${wanted.join(", ")}` : "No invoices in server/src/data/invoices");
   process.exit(1);
 }
 
@@ -59,7 +63,9 @@ for (const entry of entries) {
   }
   const { invoice } = entry;
   const logo = invoice.logo ? readFileSync(join(dataDir, invoice.logo)) : undefined;
-  const pdf = await renderInvoicePdf(invoice, { fonts, logo });
-  writeFileSync(join(outDir, invoice.fileName), pdf);
-  console.log(`✓ out/${invoice.fileName}${invoice.status === "draft" ? "  (draft)" : ""}`);
+  for (const document of isWanted(entry) ? [invoice, ...invoice.receipts] : wantedReceipts(entry)) {
+    const pdf = await renderPdf(document, { fonts, logo });
+    writeFileSync(join(outDir, document.fileName), pdf);
+    console.log(`✓ out/${document.fileName}${document.status === "draft" ? "  (draft)" : ""}`);
+  }
 }

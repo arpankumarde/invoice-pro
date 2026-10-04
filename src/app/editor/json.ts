@@ -34,8 +34,11 @@ const KEY_ORDER: Record<string, string[]> = {
     "bankAccount",
     "memo",
     "footer",
+    "payments",
+    "receiptFooter",
   ],
   items: ["description", "details", "period", "quantity", "unitPrice", "taxes"],
+  payments: ["receiptNumber", "date", "amount", "method", "details"],
   party: ["name", "address", "email", "phone", "taxIds", "logo", "bankAccounts"],
   bankAccounts: ["id", ...BANK_ORDER],
   bankAccount: BANK_ORDER,
@@ -82,11 +85,12 @@ export function tidy(value: unknown, context = "invoice"): unknown {
 export const toJson = (value: unknown) => `${JSON.stringify(value ?? {}, null, 2)}\n`;
 
 /**
- * Invoice numbers look like INV-2026-10-0001: the year and month the invoice is issued, then a
- * count within that month. New invoices are issued today.
+ * Invoice numbers look like INV-2026-10-0001 and receipt numbers like RCT-2026-10-0001: the year
+ * and month the invoice is issued or the payment recorded, then a count within that month. New
+ * invoices and payments are dated today.
  */
-export function nextInvoiceNumber(numbers: string[], now = new Date()): string {
-  const prefix = `INV-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-`;
+export function nextNumber(kind: "INV" | "RCT", numbers: string[], now = new Date()): string {
+  const prefix = `${kind}-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-`;
   const used = numbers.filter((n) => n.startsWith(prefix)).map((n) => Number(n.slice(prefix.length)) || 0);
   return prefix + String(Math.max(0, ...used) + 1).padStart(4, "0");
 }

@@ -35,6 +35,7 @@ export function createFormatters(locale: string, currency: string) {
 
   return {
     toMinor: (amount: number) => Math.round(amount * factor),
+    fromMinor: (minor: number) => minor / factor,
     money: (minor: number) => money.format(minor / factor),
     date: (date: Date) => longDate.format(date),
     shortDate: (date: Date) => shortDateYear.format(date),

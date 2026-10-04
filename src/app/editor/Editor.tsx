@@ -4,10 +4,19 @@ import type { DataSet, InvoiceEntry } from "../../invoice/types.ts";
 import { DATA_FOLDER, deleteFile, saveFile } from "../api.ts";
 import { refresh, type Snapshot } from "../data.ts";
 import { PdfPreview } from "../PdfPreview.tsx";
-import { CheckIcon, Code, Errors, PageSkeleton, primaryButton, secondaryButton, TrashIcon } from "../ui.tsx";
+import {
+  CheckIcon,
+  Code,
+  DocumentTabs,
+  Errors,
+  PageSkeleton,
+  primaryButton,
+  secondaryButton,
+  TrashIcon,
+} from "../ui.tsx";
 import { usePdf } from "../usePdf.ts";
 import { InvoiceForm, PartyForm, SettingsForm } from "./forms.tsx";
-import { asList, asObj, isObj, nextInvoiceNumber, type Obj, slug, text, tidy, today, toJson } from "./json.ts";
+import { asList, asObj, isObj, nextNumber, type Obj, slug, text, tidy, today, toJson } from "./json.ts";
 import { type EditTarget, parseTargetKey, targetKey } from "./target.ts";
 
 const NEW_INVOICE_FILE = "invoices/(new invoice).json";
@@ -41,7 +50,7 @@ function initialState({ raw, entries }: Snapshot, target: EditTarget): { record:
   }
   if (target.file) return { record: copy(raw.invoices.find((inv) => inv.file === target.file)?.data), customerId: "" };
   const numbers = entries.map((entry) => (entry.ok ? entry.invoice.number : entry.number)).filter(Boolean) as string[];
-  const number = nextInvoiceNumber(numbers);
+  const number = nextNumber("INV", numbers);
   // New invoices show your first bank account; the invoice form can change or remove it.
   const bankAccount = asList(asObj(raw.business).bankAccounts)
     .map((account) => text(asObj(account).id))
@@ -121,6 +130,8 @@ export function Editor({
   const [jsonText, setJsonText] = useState(() => toJson(tidy(initial.record, context)));
   const [jsonError, setJsonError] = useState<string>();
   const [tab, setTab] = useState<"preview" | "json">("preview");
+  // Which document the preview shows: the invoice, or one of its receipts by id.
+  const [previewId, setPreviewId] = useState<string>();
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
 
@@ -175,7 +186,9 @@ export function Editor({
     const parsed = JSON.parse(previewSource) as { clean: Obj; id: string };
     return previewEntry(snapshot, parseTargetKey(key)!, parsed.clean, parsed.id);
   }, [snapshot, key, previewSource]);
-  const pdf = usePdf(entry?.ok ? entry.invoice : undefined, images);
+  const invoice = entry?.ok ? entry.invoice : undefined;
+  const shown = invoice?.receipts.find((receipt) => receipt.id === previewId) ?? invoice;
+  const pdf = usePdf(shown, images);
 
   const save = async () => {
     if (!canSave) return;
@@ -314,9 +327,19 @@ export function Editor({
               record={record}
               onChange={updateRecord}
               raw={raw}
-              suggestedNumber={nextInvoiceNumber(
+              suggestedNumber={nextNumber(
+                "INV",
                 snapshot.entries.map((e) => (e.ok ? e.invoice.number : e.number)).filter(Boolean) as string[],
               )}
+              receiptNumbers={raw.invoices
+                .filter((inv) => inv.file !== target.file)
+                .flatMap((inv) => asList(asObj(inv.data).payments).map((payment) => text(asObj(payment).receiptNumber)))
+                .filter(Boolean)}
+              total={invoice?.summary.total}
+              onRecordPayment={(index) => {
+                setPreviewId(`${fileStem(target.file ?? NEW_INVOICE_FILE)}/receipt-${index + 1}`);
+                setTab("preview");
+              }}
             />
           ) : target.kind === "settings" ? (
             <SettingsForm record={record} onChange={updateRecord} />
@@ -374,6 +397,7 @@ export function Editor({
                   Shown on {entry.invoice.number ?? entry.id}, your latest invoice.
                 </p>
               )}
+              <DocumentTabs invoice={entry.invoice} selectedId={shown?.id ?? entry.id} onSelect={setPreviewId} />
               {pdf.error && <p className="mb-4 rounded-lg bg-red-50 p-4 text-sm text-red-800">{pdf.error}</p>}
               {pdf.previewBytes ? (
                 <PdfPreview bytes={pdf.previewBytes} label={`${title} preview`} />

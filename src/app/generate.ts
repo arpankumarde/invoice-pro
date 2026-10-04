@@ -1,7 +1,7 @@
 import regularUrl from "../assets/fonts/Inter-Regular.ttf?url";
 import mediumUrl from "../assets/fonts/Inter-Medium.ttf?url";
 import semiboldUrl from "../assets/fonts/Inter-SemiBold.ttf?url";
-import type { ResolvedInvoice } from "../invoice/types.ts";
+import type { ResolvedDocument } from "../invoice/types.ts";
 import type { RenderAssets } from "../pdf/render.ts";
 
 async function fetchBytes(url: string) {
@@ -22,14 +22,14 @@ function loadFonts() {
 }
 
 /** Builds the PDF in the browser. pdfkit is loaded on first use to keep the page light. */
-export async function generatePdf(invoice: ResolvedInvoice, images: Record<string, string>) {
+export async function generatePdf(invoice: ResolvedDocument, images: Record<string, string>) {
   const logoUrl = invoice.logo ? images[invoice.logo] : undefined;
-  const [{ renderInvoicePdf }, loadedFonts, logo] = await Promise.all([
+  const [{ renderPdf }, loadedFonts, logo] = await Promise.all([
     import("../pdf/render.ts"),
     loadFonts(),
     logoUrl ? fetchBytes(logoUrl) : undefined,
   ]);
-  return renderInvoicePdf(invoice, { fonts: loadedFonts, logo });
+  return renderPdf(invoice, { fonts: loadedFonts, logo });
 }
 
 export function downloadPdf(bytes: Uint8Array<ArrayBuffer>, fileName: string) {

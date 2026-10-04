@@ -6,6 +6,8 @@ import type {
   LineItem,
   MetaRow,
   Party,
+  PaymentRow,
+  ResolvedDocument,
   ResolvedInvoice,
   Settings,
   TaxId,
@@ -345,17 +347,20 @@ function resolveInvoice(file: string, raw: unknown, shared: Shared, errors: stri
     };
   });
 
-  const meta: MetaRow[] = [];
-  if (number) meta.push({ label: "Invoice number", value: number, strong: true });
-  if (issueDate) meta.push({ label: "Date of issue", value: fmt.date(issueDate) });
-  if (dueDate) meta.push({ label: "Date due", value: fmt.date(dueDate) });
+  // Custom fields follow the dates, on the invoice and on its receipts.
+  const customFields: MetaRow[] = [];
   list(raw, "customFields", at, errors).forEach((entry, i) => {
     const where = `customFields[${i}].`;
     if (!isObj(entry)) return errors.push(`customFields[${i}] must be an object with label and value`);
     const label = optStr(entry, "label", where, errors) ?? "";
     const value = optStr(entry, "value", where, errors);
-    if (value) meta.push({ label, value });
+    if (value) customFields.push({ label, value });
   });
+  const meta: MetaRow[] = [];
+  if (number) meta.push({ label: "Invoice number", value: number, strong: true });
+  if (issueDate) meta.push({ label: "Date of issue", value: fmt.date(issueDate) });
+  if (dueDate) meta.push({ label: "Date due", value: fmt.date(dueDate) });
+  meta.push(...customFields);
 
   const payUrl = optStr(raw, "payUrl", at, errors);
   if (payUrl && !/^https?:\/\/\S+$/i.test(payUrl)) errors.push("payUrl must start with https:// or http://");
@@ -372,6 +377,33 @@ function resolveInvoice(file: string, raw: unknown, shared: Shared, errors: stri
 
   const memo = optStr(raw, "memo", at, errors);
   const footer = optStr(raw, "footer", at, errors);
+  const receiptFooter = optStr(raw, "receiptFooter", at, errors);
+
+  // Each payment gets a receipt, which lists the payments up to and including it. So the list
+  // has to be in the order the payments were made.
+  let lastPaid: Date | undefined;
+  const payments = list(raw, "payments", at, errors).map((entry, i) => {
+    const where = `payments[${i}].`;
+    if (!isObj(entry)) {
+      errors.push(`payments[${i}] must be an object`);
+      return undefined;
+    }
+    const amount = optNum(entry, "amount", where, errors);
+    if (amount === undefined && isBlank(entry.amount)) errors.push(`${where}amount is required`);
+    if (amount !== undefined && amount <= 0) errors.push(`${where}amount must be greater than 0`);
+    const date = optDate(entry, "date", where, errors);
+    if (date && lastPaid && date < lastPaid) {
+      errors.push(`${where}date is before the payment above it; list payments in the order they were made`);
+    }
+    lastPaid = date ?? lastPaid;
+    return {
+      receiptNumber: optStr(entry, "receiptNumber", where, errors),
+      date,
+      amountMinor: fmt.toMinor(amount ?? 0),
+      method: optStr(entry, "method", where, errors),
+      details: strList(entry, "details", where, errors),
+    };
+  });
 
   if (errors.length > 0) return undefined;
 
@@ -417,37 +449,85 @@ function resolveInvoice(file: string, raw: unknown, shared: Shared, errors: stri
   }
   const total = subtotal + taxTotal;
   totals.push({ label: "Total", value: fmt.money(total) });
-  totals.push({ label: "Amount due", value: fmt.money(total), strong: true });
+
+  const paidMinor = payments.reduce((sum, payment) => sum + (payment?.amountMinor ?? 0), 0);
+  if (paidMinor > total) {
+    errors.push(`payments add up to ${fmt.money(paidMinor)}, more than the invoice total of ${fmt.money(total)}`);
+    return undefined;
+  }
 
   const id = fileStem(file);
-  const baseName = `Invoice-${safeFileName(number ?? id)}`;
+  const pdfName = (base: string) => `${safeFileName(base)}${status === "draft" ? "-DRAFT" : ""}.pdf`;
 
-  return {
-    id,
+  // Parts an invoice shares with its receipts.
+  const common = {
     file,
     status,
-    number,
-    fileName: status === "draft" ? `${baseName}-DRAFT.pdf` : `${baseName}.pdf`,
     settings: shared.settings,
-    meta,
     seller: shared.seller,
     logo: shared.logo,
     billTo,
+    hasQuantityColumn: items.some((item) => item.quantity),
+    hasTaxColumn: groups.size > 0,
+    items,
+    footnotes: [...noteNumbers.entries()].map(([note, n]) => `[${n}] ${note}`),
+  };
+
+  // With no errors recorded, every payment was read.
+  const made = payments.map((payment) => payment!);
+  const history: PaymentRow[] = made.map((payment) => ({
+    method: payment.method ?? "",
+    details: payment.details,
+    date: payment.date ? fmt.date(payment.date) : "",
+    amount: fmt.money(payment.amountMinor),
+    receiptNumber: payment.receiptNumber ?? "",
+  }));
+  let paidSoFar = 0;
+  const receipts = made.map(({ receiptNumber, date, amountMinor }, i): ResolvedDocument => {
+    paidSoFar += amountMinor;
+    const receiptMeta: MetaRow[] = [];
+    if (number) receiptMeta.push({ label: "Invoice number", value: number, strong: true });
+    if (receiptNumber) receiptMeta.push({ label: "Receipt number", value: receiptNumber });
+    if (date) receiptMeta.push({ label: "Date paid", value: fmt.date(date) });
+    receiptMeta.push(...customFields);
+    const receiptTotals: TotalRow[] = [...totals, { label: "Amount paid", value: fmt.money(paidSoFar), strong: true }];
+    if (paidSoFar < total) receiptTotals.push({ label: "Amount remaining", value: fmt.money(total - paidSoFar) });
+    return {
+      ...common,
+      kind: "receipt",
+      id: `${id}/receipt-${i + 1}`,
+      number: receiptNumber,
+      fileName: pdfName(`Receipt-${receiptNumber ?? `${number ?? id}-${i + 1}`}`),
+      meta: receiptMeta,
+      headline: `${fmt.money(amountMinor)} paid${date ? ` on ${fmt.date(date)}` : ""}`,
+      totals: receiptTotals,
+      payments: history.slice(0, i + 1),
+      footer: receiptFooter,
+    };
+  });
+
+  return {
+    ...common,
+    kind: "invoice",
+    id,
+    number,
+    fileName: pdfName(`Invoice-${number ?? id}`),
+    meta,
     headline: dueDate ? `${fmt.money(total)} due ${fmt.date(dueDate)}` : `${fmt.money(total)} due`,
     payUrl,
     bankAccount: bankAccount?.length ? bankAccount : undefined,
     memo,
-    hasQuantityColumn: items.some((item) => item.quantity),
-    hasTaxColumn: groups.size > 0,
-    items,
-    totals,
-    footnotes: [...noteNumbers.entries()].map(([note, n]) => `[${n}] ${note}`),
+    totals: [...totals, { label: "Amount due", value: fmt.money(total), strong: true }],
+    payments: [],
     footer,
+    receipts,
     summary: {
       customer: billTo?.name,
       amountDue: fmt.money(total),
       issueDate: issueDate && fmt.date(issueDate),
       sortKey: `${issueDate?.toISOString().slice(0, 10) ?? "0000-00-00"} ${number ?? id}`,
+      payment: paidMinor === 0 ? "unpaid" : paidMinor < total ? "partial" : "paid",
+      total: fmt.fromMinor(total),
     },
   };
 }
@@ -473,19 +553,40 @@ export function resolveAll(data: DataSet): InvoiceEntry[] {
     };
   });
 
-  // Invoice numbers must be unique across the folder.
+  // Invoice numbers and receipt numbers must be unique across the folder. Receipt numbers are
+  // read from the raw files, so a clash is reported even on an invoice with other errors.
   const byNumber = new Map<string, string[]>();
   for (const entry of entries) {
     const number = entry.ok ? entry.invoice.number : entry.number;
     if (number) byNumber.set(number, [...(byNumber.get(number) ?? []), entry.file]);
   }
-  return entries.map((entry) => {
+  const receiptNumbers = data.invoices.map(({ data: raw }) =>
+    (isObj(raw) && Array.isArray(raw.payments) ? raw.payments : [])
+      .map((payment) => (isObj(payment) && typeof payment.receiptNumber === "string" ? payment.receiptNumber.trim() : ""))
+      .filter(Boolean),
+  );
+  const byReceipt = new Map<string, string[]>();
+  data.invoices.forEach(({ file }, i) => {
+    for (const receipt of receiptNumbers[i]) byReceipt.set(receipt, [...(byReceipt.get(receipt) ?? []), file]);
+  });
+
+  return entries.map((entry, i) => {
+    const messages: string[] = [];
     const number = entry.ok ? entry.invoice.number : entry.number;
     const clashes = number ? byNumber.get(number)!.filter((f) => f !== entry.file) : [];
-    if (clashes.length === 0) return entry;
-    const message = `Invoice number "${number}" is also used by ${clashes.map(fileStem).join(", ")}`;
+    if (clashes.length > 0) messages.push(`Invoice number "${number}" is also used by ${clashes.map(fileStem).join(", ")}`);
+    for (const receipt of new Set(receiptNumbers[i])) {
+      const files = byReceipt.get(receipt)!;
+      const others = [...new Set(files.filter((f) => f !== entry.file))];
+      if (others.length > 0) {
+        messages.push(`Receipt number "${receipt}" is also used by ${others.map(fileStem).join(", ")}`);
+      } else if (files.length > 1) {
+        messages.push(`Receipt number "${receipt}" is used by more than one payment`);
+      }
+    }
+    if (messages.length === 0) return entry;
     return entry.ok
-      ? { id: entry.id, file: entry.file, ok: false, errors: [message], status: entry.invoice.status, number }
-      : { ...entry, errors: [...entry.errors, message] };
+      ? { id: entry.id, file: entry.file, ok: false, errors: messages, status: entry.invoice.status, number }
+      : { ...entry, errors: [...entry.errors, ...messages] };
   });
 }

@@ -1,5 +1,5 @@
 import PDFDocument from "pdfkit";
-import type { Party, ResolvedInvoice } from "../invoice/types.ts";
+import type { Party, ResolvedDocument } from "../invoice/types.ts";
 import { stripJpegMetadata } from "./image.ts";
 
 export interface RenderAssets {
@@ -42,14 +42,14 @@ const randomHex = (bytes: number) =>
   Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
 
 /**
- * Draws the invoice and returns the finished PDF.
+ * Draws the invoice, or one of its receipts, and returns the finished PDF.
  *
  * Text stays real, selectable vector text. The file is encrypted (AES-256) with no open password
  * and a random owner password that is thrown away, so viewers refuse editing and page assembly
  * (annotating too, unless settings allow it). It carries no Info entries, no XMP packet and a
  * random file ID.
  */
-export function renderInvoicePdf(invoice: ResolvedInvoice, assets: RenderAssets): Promise<Uint8Array<ArrayBuffer>> {
+export function renderPdf(invoice: ResolvedDocument, assets: RenderAssets): Promise<Uint8Array<ArrayBuffer>> {
   const { settings } = invoice;
   const [pageWidth, pageHeight] = PAGE_SIZES[settings.pageSize];
   const right = pageWidth - MARGIN;
@@ -169,7 +169,7 @@ export function renderInvoicePdf(invoice: ResolvedInvoice, assets: RenderAssets)
   /* ---------- header ---------- */
 
   addPage();
-  const titleWidth = write("Invoice", MARGIN, 48, { weight: "semibold", size: 18 });
+  const titleWidth = write(invoice.kind === "receipt" ? "Receipt" : "Invoice", MARGIN, 48, { weight: "semibold", size: 18 });
   if (invoice.status === "draft") {
     const pill: Style = { weight: "semibold", size: 7.5, color: "#5C5C5C" };
     const pillWidth = measure("DRAFT", pill) + 12;
@@ -346,6 +346,70 @@ export function renderInvoicePdf(invoice: ResolvedInvoice, assets: RenderAssets)
     ruleY += 14.25;
   }
   y = ruleY - 14.25 + 10.5;
+
+  /* ---------- payment history (receipts) ---------- */
+
+  // A small table like the line items: amounts and receipt numbers sized to their content from
+  // the right, dates lined up with the totals when there is room, the method taking the rest.
+  if (invoice.payments.length > 0) {
+    const { payments } = invoice;
+    const DETAILS_GAP = 11.25; // method baseline to its first line of small print
+    const hasDate = payments.some((row) => row.date);
+    const hasReceipt = payments.some((row) => row.receiptNumber);
+    const receiptWidth = hasReceipt
+      ? snap(Math.max(measure("Receipt number", SMALL), ...payments.map((row) => measure(row.receiptNumber))))
+      : 0;
+    const paidRight = hasReceipt ? right - receiptWidth - COLUMN_GAP : right;
+    const paidLeft =
+      paidRight - snap(Math.max(measure("Amount paid", SMALL), ...payments.map((row) => measure(row.amount))));
+    const dateWidth = hasDate ? snap(Math.max(measure("Date", SMALL), ...payments.map((row) => measure(row.date)))) : 0;
+    const dateX = Math.min(totalsX, paidLeft - COLUMN_GAP - dateWidth);
+    const methodWidth = (hasDate ? dateX : paidLeft) - COLUMN_GAP - MARGIN;
+
+    const rows = payments.map((row) => {
+      const method = wrap(row.method, methodWidth);
+      const details = row.details.flatMap((text) => wrap(text, methodWidth, SMALL));
+      const methodDepth = (method.length - 1) * LINE;
+      const depth = details.length > 0 ? methodDepth + DETAILS_GAP + (details.length - 1) * SMALL_LINE : methodDepth;
+      return { ...row, method, details, methodDepth, depth };
+    });
+
+    const drawHeader = (baseline: number) => {
+      write("Payment method", MARGIN, baseline, SMALL);
+      if (hasDate) write("Date", dateX, baseline, SMALL);
+      write("Amount paid", paidRight, baseline, SMALL, "right");
+      if (hasReceipt) write("Receipt number", right, baseline, SMALL, "right");
+      hrule(MARGIN, baseline + 7.5, width, BLACK);
+      return baseline + 7.5 + RULE + 13.5;
+    };
+
+    // The heading stays with the header and first row.
+    let title = y + 39.75;
+    if (title + 36 + 21.75 + rows[0].depth > bottom) {
+      addPage();
+      title = CONTINUED_TOP;
+    }
+    write("Payment history", MARGIN, title, { weight: "semibold", size: 13.5 });
+    let next = drawHeader(title + 36);
+    let rowEnd = next;
+    for (const row of rows) {
+      let top = next;
+      if (top + row.depth > bottom) {
+        addPage();
+        top = drawHeader(CONTINUED_TOP);
+      }
+      row.method.forEach((line, i) => write(line, MARGIN, top + i * LINE));
+      row.details.forEach((line, i) =>
+        write(line, MARGIN, top + row.methodDepth + DETAILS_GAP + i * SMALL_LINE, SMALL),
+      );
+      if (row.date) write(row.date, dateX, top);
+      write(row.amount, paidRight, top, {}, "right");
+      if (row.receiptNumber) write(row.receiptNumber, right, top, {}, "right");
+      rowEnd = top + row.depth;
+      next = rowEnd + LINE + ITEM_GAP;
+    }
+    y = rowEnd;
+  }
 
   /* ---------- bank transfer details ---------- */
 
