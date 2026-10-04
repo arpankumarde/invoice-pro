@@ -116,9 +116,6 @@ function Workspace({ snapshot }: { snapshot: Snapshot }) {
             />
           )}
         </nav>
-        <p className="border-t border-line px-5 py-3 text-xs leading-relaxed text-muted max-md:hidden">
-          Saved in <code className="font-mono">{DATA_FOLDER}</code> by the local data server.
-        </p>
       </aside>
 
       <main className="min-w-0 flex-1 overflow-y-auto">
