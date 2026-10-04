@@ -2,8 +2,9 @@ import type { ReactNode } from "react";
 import { PlusIcon, TrashIcon } from "../ui.tsx";
 import { asList, asObj, type Obj, text } from "./json.ts";
 
-const control =
-  "mt-1 block w-full rounded-md border border-black/10 bg-white px-2.5 text-sm text-ink outline-none placeholder:text-black/30 focus:border-black/30 focus:ring-2 focus:ring-black/[0.06]";
+const controlBase =
+  "block w-full rounded-md border border-black/10 bg-white px-2.5 text-sm text-ink outline-none placeholder:text-black/30 focus:border-black/30 focus:ring-2 focus:ring-black/[0.06]";
+const control = `mt-1 ${controlBase}`;
 
 export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
@@ -120,6 +121,65 @@ export function Select({
         </option>
       ))}
     </select>
+  );
+}
+
+/** A hex colour, typed or picked. Shows `fallback` while the JSON leaves it out. */
+export function ColorInput({
+  value,
+  fallback,
+  onChange,
+}: {
+  value: unknown;
+  fallback: string;
+  onChange: (value: string) => void;
+}) {
+  const current = text(value);
+  const shown = /^#[0-9a-f]{6}$/i.test(current) ? current : fallback;
+  return (
+    <span className="mt-1 flex gap-2">
+      <input
+        value={current}
+        placeholder={fallback}
+        spellCheck={false}
+        onChange={(event) => onChange(event.target.value)}
+        className={`${controlBase} h-9 font-mono`}
+      />
+      <input
+        type="color"
+        value={shown.toLowerCase()}
+        onChange={(event) => onChange(event.target.value.toUpperCase())}
+        aria-label="Pick a colour"
+        className="h-9 w-12 shrink-0 cursor-pointer rounded-md border border-black/10 bg-white p-1"
+      />
+    </span>
+  );
+}
+
+export function Checkbox({
+  checked,
+  onChange,
+  label,
+  hint,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+  hint?: ReactNode;
+}) {
+  return (
+    <label className="flex items-start gap-2.5">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="mt-0.5 size-4 shrink-0 accent-ink"
+      />
+      <span>
+        <span className="block text-sm">{label}</span>
+        {hint && <span className="mt-0.5 block text-[11px] leading-snug text-muted">{hint}</span>}
+      </span>
+    </label>
   );
 }
 

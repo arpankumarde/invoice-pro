@@ -6,7 +6,10 @@ export interface Settings {
   locale: string;
   currency: string;
   pageSize: PageSize;
+  /** The strip across the top of every page. */
   accentColor: string;
+  /** When set, the strip fades from accentColor on the left to this colour on the right. */
+  accentColorEnd?: string;
   linkColor: string;
   /** Editing is always blocked; these control what else viewers may do. */
   permissions: {
@@ -80,6 +83,8 @@ export interface ResolvedInvoice {
   billTo?: Party;
   headline: string;
   payUrl?: string;
+  /** "Pay by bank transfer" rows, e.g. Account number, IFSC. */
+  bankAccount?: MetaRow[];
   memo?: string;
   hasQuantityColumn: boolean;
   hasTaxColumn: boolean;

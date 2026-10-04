@@ -17,6 +17,8 @@ export function setKey(obj: Obj, key: string, value: unknown): Obj {
   return next;
 }
 
+const BANK_ORDER = ["accountName", "bankName", "accountNumber", "accountType", "ifsc", "swift", "branch", "upi", "details"];
+
 const KEY_ORDER: Record<string, string[]> = {
   invoice: [
     "status",
@@ -29,15 +31,24 @@ const KEY_ORDER: Record<string, string[]> = {
     "taxes",
     "items",
     "payUrl",
+    "bankAccount",
     "memo",
     "footer",
   ],
   items: ["description", "details", "period", "quantity", "unitPrice", "taxes"],
-  party: ["name", "address", "email", "phone", "taxIds", "logo"],
+  party: ["name", "address", "email", "phone", "taxIds", "logo", "bankAccounts"],
+  bankAccounts: ["id", ...BANK_ORDER],
+  bankAccount: BANK_ORDER,
+  details: ["label", "value"],
+  settings: ["locale", "currency", "pageSize", "accentColor", "accentColorEnd", "linkColor", "permissions"],
+  permissions: ["printing", "copying", "annotating"],
   period: ["start", "end"],
   taxIds: ["type", "value"],
   customFields: ["label", "value"],
 };
+
+/** Objects whose children are named by their key; in any other object the children share its context. */
+const NAMED_CHILDREN = new Set(["invoice", "items", "party", "settings", "bankAccounts", "bankAccount"]);
 
 function sortKeys(obj: Obj, order: string[] | undefined): Obj {
   if (!order) return obj;
@@ -59,7 +70,7 @@ export function tidy(value: unknown, context = "invoice"): unknown {
   if (isObj(value)) {
     const out: Obj = {};
     for (const [key, entry] of Object.entries(value)) {
-      const child = context === "invoice" || context === "items" || context === "party" ? key : context;
+      const child = NAMED_CHILDREN.has(context) ? key : context;
       const cleaned = tidy(entry, key === "customer" && isObj(entry) ? "party" : child);
       if (cleaned !== undefined) out[key] = cleaned;
     }

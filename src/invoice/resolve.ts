@@ -26,13 +26,14 @@ interface Shared {
   logo?: string;
   customers: Record<string, Party>;
   taxes: Record<string, TaxRate>;
+  bankAccounts: Record<string, MetaRow[]>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   locale: "en-GB",
   currency: "INR",
   pageSize: "LETTER",
-  accentColor: "#FFF6EB",
+  accentColor: "#2563EB",
   linkColor: "#635BFF",
   permissions: { printing: true, copying: true, annotating: false },
 };
@@ -95,6 +96,35 @@ function list(o: Obj, key: string, at: string, errors: string[]): unknown[] {
 
 /* ---------- shared data files ---------- */
 
+/** Bank account fields in print order, with their printed labels. */
+export const BANK_FIELDS = [
+  ["accountName", "Account name"],
+  ["bankName", "Bank"],
+  ["accountNumber", "Account number"],
+  ["accountType", "Account type"],
+  ["ifsc", "IFSC"],
+  ["swift", "SWIFT/BIC"],
+  ["branch", "Branch"],
+  ["upi", "UPI ID"],
+] as const;
+
+/** A bank account as label/value rows; `details` adds rows of its own (IBAN, routing number…). */
+function readBankAccount(value: Obj, at: string, errors: string[]): MetaRow[] {
+  const rows: MetaRow[] = [];
+  for (const [key, label] of BANK_FIELDS) {
+    const text = optStr(value, key, at, errors);
+    if (text) rows.push({ label, value: text });
+  }
+  list(value, "details", at, errors).forEach((entry, i) => {
+    const where = `${at}details[${i}].`;
+    if (!isObj(entry)) return errors.push(`${at}details[${i}] must be an object with label and value`);
+    const label = optStr(entry, "label", where, errors) ?? "";
+    const text = optStr(entry, "value", where, errors);
+    if (text) rows.push({ label, value: text });
+  });
+  return rows;
+}
+
 /** Every field is optional; returns undefined when nothing is filled in, so the block is left out. */
 function readParty(value: unknown, at: string, errors: string[]): Party | undefined {
   if (!isObj(value)) {
@@ -154,7 +184,7 @@ function readSettings(raw: unknown, errors: string[]): Settings {
     else errors.push(`${at}pageSize must be "LETTER" or "A4"`);
   }
 
-  for (const key of ["accentColor", "linkColor"] as const) {
+  for (const key of ["accentColor", "accentColorEnd", "linkColor"] as const) {
     const color = optStr(raw, key, at, errors);
     if (!color) continue;
     if (/^#[0-9a-f]{6}$/i.test(color)) settings[key] = color;
@@ -181,11 +211,20 @@ function readShared(data: DataSet, errors: string[]): Shared {
 
   const seller = data.business === undefined ? undefined : readParty(data.business, "business.json → ", errors);
   let logo: string | undefined;
+  const bankAccounts: Record<string, MetaRow[]> = {};
   if (isObj(data.business)) {
     logo = optStr(data.business, "logo", "business.json → ", errors);
     if (logo && !data.images.includes(logo)) {
       errors.push(`business.json → logo "${logo}" was not found in src/data (PNG or JPEG)`);
     }
+    list(data.business, "bankAccounts", "business.json → ", errors).forEach((entry, i) => {
+      const at = `business.json → bankAccounts[${i}].`;
+      if (!isObj(entry)) return errors.push(`business.json → bankAccounts[${i}] must be an object`);
+      const id = optStr(entry, "id", at, errors);
+      if (!id) return errors.push(`${at}id is required, so invoices can refer to the account`);
+      if (id in bankAccounts) return errors.push(`${at}id "${id}" is already used by another bank account`);
+      bankAccounts[id] = readBankAccount(entry, at, errors);
+    });
   }
 
   const customers: Record<string, Party> = {};
@@ -218,7 +257,7 @@ function readShared(data: DataSet, errors: string[]): Shared {
       }
   }
 
-  return { settings, seller, logo, customers, taxes };
+  return { settings, seller, logo, customers, taxes, bankAccounts };
 }
 
 /* ---------- invoices ---------- */
@@ -321,6 +360,16 @@ function resolveInvoice(file: string, raw: unknown, shared: Shared, errors: stri
   const payUrl = optStr(raw, "payUrl", at, errors);
   if (payUrl && !/^https?:\/\/\S+$/i.test(payUrl)) errors.push("payUrl must start with https:// or http://");
 
+  let bankAccount: MetaRow[] | undefined;
+  if (typeof raw.bankAccount === "string" && raw.bankAccount) {
+    bankAccount = shared.bankAccounts[raw.bankAccount];
+    if (!bankAccount) errors.push(`bankAccount "${raw.bankAccount}" is not one of the bank accounts in business.json`);
+  } else if (isObj(raw.bankAccount)) {
+    bankAccount = readBankAccount(raw.bankAccount, "bankAccount.", errors);
+  } else if (!isBlank(raw.bankAccount)) {
+    errors.push("bankAccount must be the id of a bank account in business.json, or an object");
+  }
+
   const memo = optStr(raw, "memo", at, errors);
   const footer = optStr(raw, "footer", at, errors);
 
@@ -386,6 +435,7 @@ function resolveInvoice(file: string, raw: unknown, shared: Shared, errors: stri
     billTo,
     headline: dueDate ? `${fmt.money(total)} due ${fmt.date(dueDate)}` : `${fmt.money(total)} due`,
     payUrl,
+    bankAccount: bankAccount?.length ? bankAccount : undefined,
     memo,
     hasQuantityColumn: items.some((item) => item.quantity),
     hasTaxColumn: groups.size > 0,

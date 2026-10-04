@@ -9,7 +9,6 @@ import {
   Code,
   DownloadIcon,
   Errors,
-  LockIcon,
   PageSkeleton,
   PencilIcon,
   PlusIcon,
@@ -18,7 +17,7 @@ import {
   StatusBadge,
 } from "./app/ui.tsx";
 import { usePdf } from "./app/usePdf.ts";
-import type { InvoiceEntry, InvoiceStatus, ResolvedInvoice } from "./invoice/types.ts";
+import type { InvoiceEntry, InvoiceStatus } from "./invoice/types.ts";
 
 type Mode = "invoices" | "editor";
 interface Route {
@@ -275,7 +274,10 @@ function EditorNav({
           return item({ kind: "customer", id }, id, typeof name === "string" ? name : undefined);
         })}
       </NavGroup>
-      <NavGroup title="You">{item({ kind: "business" }, "Your details")}</NavGroup>
+      <NavGroup title="You">
+        {item({ kind: "business" }, "Your details")}
+        {item({ kind: "settings" }, "Settings", "Colours, format, PDF permissions")}
+      </NavGroup>
     </>
   );
 }
@@ -343,7 +345,6 @@ function InvoiceView({
       </header>
 
       <div className="mx-auto max-w-[880px] px-4 py-6 sm:px-8">
-        {invoice && <Notice invoice={invoice} />}
         {!entry.ok && (
           <Errors
             title="This invoice can't be generated yet"
@@ -366,34 +367,5 @@ function InvoiceView({
           ))}
       </div>
     </>
-  );
-}
-
-function Notice({ invoice }: { invoice: ResolvedInvoice }) {
-  const { permissions } = invoice.settings;
-  const allowed = [
-    permissions.copying && "copy text",
-    permissions.printing && "print",
-    permissions.annotating && "add comments",
-  ].filter(Boolean);
-  return (
-    <div className="mb-6 space-y-1.5 text-[13px] leading-relaxed text-muted">
-      <p className="flex items-start gap-2">
-        <LockIcon />
-        <span>
-          Downloads are locked PDFs: editing is blocked{allowed.length > 0 ? ` and readers can ${allowed.join(", ")}` : ""}.
-          No author, dates or producer are stored in the file. The invoice itself stays editable: change it in the
-          editor at any time and download again.
-        </span>
-      </p>
-      {invoice.status === "draft" && (
-        <p className="flex items-start gap-2">
-          <PencilIcon />
-          <span>
-            Draft: every page carries a DRAFT watermark. Set the status to Final in the editor to issue it.
-          </span>
-        </p>
-      )}
-    </div>
   );
 }

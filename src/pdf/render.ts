@@ -142,9 +142,15 @@ export function renderInvoicePdf(invoice: ResolvedInvoice, assets: RenderAssets)
   const hrule = (x: number, y: number, ruleWidth: number, color: string) =>
     doc.rect(x, y, ruleWidth, RULE).fill(color);
 
+  // A solid colour, or a left-to-right gradient when settings give an end colour.
+  const accentFill = () => {
+    if (!settings.accentColorEnd) return settings.accentColor;
+    return doc.linearGradient(0, 0, pageWidth, 0).stop(0, settings.accentColor).stop(1, settings.accentColorEnd);
+  };
+
   const addPage = () => {
     doc.addPage({ size: [pageWidth, pageHeight], margin: 0 });
-    doc.rect(0, 0, pageWidth, 4).fill(settings.accentColor);
+    doc.rect(0, 0, pageWidth, 4).fill(accentFill());
     if (invoice.status === "draft") {
       const size = 150;
       doc.save();
@@ -339,10 +345,58 @@ export function renderInvoicePdf(invoice: ResolvedInvoice, assets: RenderAssets)
     write(row.value, right, ruleY + 10.5, style, "right");
     ruleY += 14.25;
   }
+  y = ruleY - 14.25 + 10.5;
+
+  /* ---------- bank transfer details ---------- */
+
+  // Small labels over their values, like the table header. As many columns as fit the page, each
+  // as wide as its widest cell, so wrapped rows line up. Offsets are baselines from the title.
+  if (invoice.bankAccount) {
+    const LABEL_TO_VALUE = 12;
+    const fields = invoice.bankAccount.map((row) => ({
+      ...row,
+      width: Math.min(width, Math.max(measure(row.label, SMALL), measure(row.value))),
+    }));
+    const columnWidths = (count: number) =>
+      Array.from({ length: count }, (_, column) =>
+        Math.max(...fields.filter((_, i) => i % count === column).map((field) => field.width)),
+      );
+    const fits = (count: number) => columnWidths(count).reduce((sum, w) => sum + w + COLUMN_GAP, -COLUMN_GAP) <= width;
+    let count = fields.length;
+    while (count > 1 && !fits(count)) count--;
+    // Spread the fields evenly over the rows they need, rather than leaving one alone on the last.
+    const balanced = Math.ceil(fields.length / Math.ceil(fields.length / count));
+    if (fits(balanced)) count = balanced;
+    const widths = columnWidths(count);
+
+    const cells: { label: string; lines: string[]; x: number; top: number }[] = [];
+    let top = 18;
+    let depth = 0;
+    fields.forEach((field, i) => {
+      const column = i % count;
+      if (column === 0 && i > 0) top = depth + 21;
+      const x = MARGIN + widths.slice(0, column).reduce((sum, w) => sum + w + COLUMN_GAP, 0);
+      const lines = measure(field.value) <= widths[column] ? [field.value] : wrap(field.value, widths[column]);
+      cells.push({ label: field.label, lines, x, top });
+      depth = Math.max(depth, top + LABEL_TO_VALUE + (lines.length - 1) * LINE);
+    });
+
+    let title = y + 39.75;
+    if (title + depth > bottom) {
+      addPage();
+      title = CONTINUED_TOP;
+    }
+    write("Pay by bank transfer", MARGIN, title, { weight: "semibold" });
+    for (const cell of cells) {
+      write(cell.label, cell.x, title + cell.top, SMALL);
+      cell.lines.forEach((line, i) => write(line, cell.x, title + cell.top + LABEL_TO_VALUE + i * LINE));
+    }
+    y = title + depth;
+  }
 
   /* ---------- footnotes and footer text ---------- */
 
-  y = ruleY - 14.25 + 10.5 + 43.5;
+  y += 43.5;
   const writeSmall = (text: string) => {
     for (const line of wrap(text, width, SMALL)) {
       if (y > bottom) {

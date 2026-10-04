@@ -6,8 +6,8 @@ import { refresh, type Snapshot } from "../data.ts";
 import { PdfPreview } from "../PdfPreview.tsx";
 import { CheckIcon, Code, Errors, PageSkeleton, primaryButton, secondaryButton, TrashIcon } from "../ui.tsx";
 import { usePdf } from "../usePdf.ts";
-import { InvoiceForm, PartyForm } from "./forms.tsx";
-import { asObj, isObj, nextInvoiceNumber, type Obj, slug, text, tidy, today, toJson } from "./json.ts";
+import { InvoiceForm, PartyForm, SettingsForm } from "./forms.tsx";
+import { asList, asObj, isObj, nextInvoiceNumber, type Obj, slug, text, tidy, today, toJson } from "./json.ts";
 import { type EditTarget, parseTargetKey, targetKey } from "./target.ts";
 
 const NEW_INVOICE_FILE = "invoices/(new invoice).json";
@@ -35,26 +35,32 @@ function mergeCustomer(customers: unknown, originalId: string | undefined, id: s
 function initialState({ raw, entries }: Snapshot, target: EditTarget): { record: Obj; customerId: string } {
   const copy = (value: unknown): Obj => (isObj(value) ? structuredClone(value) : {});
   if (target.kind === "business") return { record: copy(raw.business), customerId: "" };
+  if (target.kind === "settings") return { record: copy(raw.settings), customerId: "" };
   if (target.kind === "customer") {
     return { record: copy(asObj(raw.customers)[target.id ?? ""]), customerId: target.id ?? "" };
   }
   if (target.file) return { record: copy(raw.invoices.find((inv) => inv.file === target.file)?.data), customerId: "" };
   const numbers = entries.map((entry) => (entry.ok ? entry.invoice.number : entry.number)).filter(Boolean) as string[];
   const number = nextInvoiceNumber(numbers);
+  // New invoices show your first bank account; the invoice form can change or remove it.
+  const bankAccount = asList(asObj(raw.business).bankAccounts)
+    .map((account) => text(asObj(account).id))
+    .find(Boolean);
   return {
     record: {
       status: "draft",
       ...(number ? { number } : {}),
       issueDate: today(),
       items: [{ description: "", quantity: 1, unitPrice: 0 }],
+      ...(bankAccount ? { bankAccount } : {}),
     },
     customerId: "",
   };
 }
 
 /**
- * Resolves what the PDF would look like with the edit applied. Customer and seller edits are
- * shown on the most recent invoice.
+ * Resolves what the PDF would look like with the edit applied. Customer, seller and settings
+ * edits are shown on the most recent invoice.
  */
 function previewEntry({ raw, entries }: Snapshot, target: EditTarget, record: Obj, customerId: string) {
   const latest = [...entries].sort((a, b) => sortKey(b).localeCompare(sortKey(a)))[0]?.file;
@@ -71,6 +77,9 @@ function previewEntry({ raw, entries }: Snapshot, target: EditTarget, record: Ob
   } else if (target.kind === "business") {
     file = latest;
     data = { ...raw, business: record };
+  } else if (target.kind === "settings") {
+    file = latest;
+    data = { ...raw, settings: record };
   } else {
     file = latest;
     const id = customerId.trim() || "(customer)";
@@ -105,7 +114,7 @@ export function Editor({
   onNavigate: (target: EditTarget) => void;
 }) {
   const { raw, images } = snapshot;
-  const context = target.kind === "invoice" ? "invoice" : "party";
+  const context = target.kind === "invoice" || target.kind === "settings" ? target.kind : "party";
   const [initial] = useState(() => initialState(snapshot, target));
   const [record, setRecord] = useState(initial.record);
   const [customerId, setCustomerId] = useState(initial.customerId);
@@ -132,7 +141,7 @@ export function Editor({
     }
   };
 
-  // What gets written: the invoice or business record itself, or the whole customers.json with
+  // What gets written: the invoice, business or settings record itself, or the whole customers.json with
   // this customer added, updated or renamed.
   const payloadFor = (rec: Obj, customer: string) => {
     const clean = asObj(tidy(rec, context));
@@ -143,8 +152,8 @@ export function Editor({
   const payload = payloadFor(record, id);
   const output = toJson(payload);
   const path =
-    target.kind === "business"
-      ? "business.json"
+    target.kind === "business" || target.kind === "settings"
+      ? `${target.kind}.json`
       : target.kind === "customer"
         ? "customers.json"
         : (target.file ?? `invoices/${slug(text(clean.number)) || "new-invoice"}.json`);
@@ -228,13 +237,15 @@ export function Editor({
   const title =
     target.kind === "business"
       ? "Your details"
-      : target.kind === "customer"
-        ? target.id
-          ? `Edit customer ${target.id}`
-          : "New customer"
-        : target.file
-          ? `Edit ${text(asObj(raw.invoices.find((inv) => inv.file === target.file)?.data).number) || fileStem(target.file)}`
-          : "New invoice";
+      : target.kind === "settings"
+        ? "Settings"
+        : target.kind === "customer"
+          ? target.id
+            ? `Edit customer ${target.id}`
+            : "New customer"
+          : target.file
+            ? `Edit ${text(asObj(raw.invoices.find((inv) => inv.file === target.file)?.data).number) || fileStem(target.file)}`
+            : "New invoice";
 
   return (
     <>
@@ -307,6 +318,8 @@ export function Editor({
                 snapshot.entries.map((e) => (e.ok ? e.invoice.number : e.number)).filter(Boolean) as string[],
               )}
             />
+          ) : target.kind === "settings" ? (
+            <SettingsForm record={record} onChange={updateRecord} />
           ) : (
             <PartyForm
               record={record}

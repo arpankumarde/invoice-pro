@@ -1,6 +1,9 @@
+import { BANK_FIELDS, DEFAULT_SETTINGS } from "../../invoice/resolve.ts";
 import type { DataSet } from "../../invoice/types.ts";
 import {
   AddButton,
+  Checkbox,
+  ColorInput,
   Field,
   LinesInput,
   NumberInput,
@@ -11,7 +14,7 @@ import {
   TextArea,
   TextInput,
 } from "./fields.tsx";
-import { asList, asObj, isObj, type Obj, setKey } from "./json.ts";
+import { asList, asObj, isObj, type Obj, setKey, text } from "./json.ts";
 
 interface FormProps {
   record: Obj;
@@ -73,7 +76,89 @@ export function PartyForm({
           addLabel="Add tax ID"
         />
       </Section>
+      {!onCustomerId && (
+        <Section title="Bank accounts">
+          <p className="-mt-1 text-[11px] text-muted">
+            Printed as "Pay by bank transfer" on invoices that pick the account. Empty fields are left off.
+          </p>
+          <BankAccounts value={record.bankAccounts} holder={text(record.name)} onChange={set("bankAccounts")} />
+        </Section>
+      )}
     </div>
+  );
+}
+
+const BANK_PLACEHOLDERS: Record<(typeof BANK_FIELDS)[number][0], string> = {
+  accountName: "Name on the account",
+  bankName: "HDFC Bank",
+  accountNumber: "50100123456789",
+  accountType: "Savings or Current",
+  ifsc: "HDFC0001234",
+  swift: "For payments from abroad",
+  branch: "Branch name",
+  upi: "name@bank",
+};
+
+function BankAccounts({
+  value,
+  holder,
+  onChange,
+}: {
+  value: unknown;
+  holder: string;
+  onChange: (accounts: Obj[] | undefined) => void;
+}) {
+  const accounts = asList(value).map(asObj);
+  const update = (index: number, next: Obj) => onChange(accounts.map((account, i) => (i === index ? next : account)));
+  const add = () => {
+    const taken = new Set(accounts.map((account) => text(account.id)));
+    let id = "bank";
+    for (let n = 2; taken.has(id); n++) id = `bank-${n}`;
+    onChange([...accounts, { id, ...(holder ? { accountName: holder } : {}) }]);
+  };
+  return (
+    <>
+      {accounts.map((account, index) => {
+        const set = (key: string) => (next: unknown) => update(index, setKey(account, key, next));
+        return (
+          <div key={index} className="rounded-lg border border-black/[0.08] bg-white p-3.5">
+            <div className="flex items-start gap-2">
+              <div className="flex-1">
+                <Field label="Account id" hint="Invoices pick the account by this id.">
+                  <TextInput value={account.id} placeholder="hdfc" onChange={set("id")} />
+                </Field>
+              </div>
+              <RemoveButton
+                label={`Remove bank account ${index + 1}`}
+                onClick={() => {
+                  const next = accounts.filter((_, i) => i !== index);
+                  onChange(next.length > 0 ? next : undefined);
+                }}
+              />
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              {BANK_FIELDS.map(([key, label]) => (
+                <Field key={key} label={label}>
+                  <TextInput value={account[key]} placeholder={BANK_PLACEHOLDERS[key]} onChange={set(key)} />
+                </Field>
+              ))}
+            </div>
+            <div className="mt-3">
+              <p className="mb-1 text-xs font-medium text-muted">Other details</p>
+              <PairRows
+                rows={account.details}
+                onChange={set("details")}
+                keys={["label", "value"]}
+                labels={["Label", "Value"]}
+                placeholders={["IBAN", "GB29 NWBK 6016 1331 9268 19"]}
+                addLabel="Add detail"
+              />
+            </div>
+          </div>
+        );
+      })}
+      <AddButton onClick={add}>Add bank account</AddButton>
+    </>
   );
 }
 
@@ -143,6 +228,24 @@ export function InvoiceForm({
   if (isObj(customer)) customerOptions.push({ value: "__inline__", label: "Inline customer (edit in JSON)" });
   else if (typeof customer === "string" && !(customer in customers)) {
     customerOptions.push({ value: customer, label: `${customer} (not in customers.json)` });
+  }
+
+  const bankAccounts = asList(asObj(raw.business).bankAccounts)
+    .map(asObj)
+    .filter((account) => text(account.id));
+  const bankAccount = record.bankAccount;
+  const bankValue = typeof bankAccount === "string" ? bankAccount : isObj(bankAccount) ? "__inline__" : "";
+  const bankOptions = [
+    { value: "", label: bankAccounts.length > 0 ? "Don't show bank details" : "Add bank accounts under Your details" },
+    ...bankAccounts.map((account) => {
+      const number = text(account.accountNumber).replace(/\s+/g, "");
+      const name = [text(account.bankName), number && `····${number.slice(-4)}`].filter(Boolean).join(" ");
+      return { value: text(account.id), label: name ? `${name} (${text(account.id)})` : text(account.id) };
+    }),
+  ];
+  if (isObj(bankAccount)) bankOptions.push({ value: "__inline__", label: "Inline account (edit in JSON)" });
+  else if (typeof bankAccount === "string" && !bankAccounts.some((account) => account.id === bankAccount)) {
+    bankOptions.push({ value: bankAccount, label: `${bankAccount} (not in Your details)` });
   }
 
   const items = asList(record.items).map(asObj);
@@ -295,12 +398,140 @@ export function InvoiceForm({
         <Field label="Payment link" hint={'Shown as "Pay online".'}>
           <TextInput type="url" value={record.payUrl} placeholder="https://" onChange={set("payUrl")} />
         </Field>
+        <Field label="Bank transfer" hint={'Shown as "Pay by bank transfer" under the totals.'}>
+          <Select
+            value={bankValue}
+            onChange={(value) => value !== "__inline__" && set("bankAccount")(value)}
+            options={bankOptions}
+          />
+        </Field>
         <Field label="Memo" hint="Printed under the amount due.">
           <TextArea value={record.memo} onChange={set("memo")} />
         </Field>
         <Field label="Footer" hint="Small print after the totals.">
           <TextArea value={record.footer} onChange={set("footer")} />
         </Field>
+      </Section>
+    </div>
+  );
+}
+
+/* ---------- settings ---------- */
+
+const STRIP_PRESETS: { label: string; colors: { accentColor: string; accentColorEnd?: string } }[] = [
+  { label: "Blue", colors: { accentColor: "#2563EB" } },
+  { label: "Blue gradient", colors: { accentColor: "#1D4ED8", accentColorEnd: "#38BDF8" } },
+  { label: "Navy gradient", colors: { accentColor: "#1E3A8A", accentColorEnd: "#3B82F6" } },
+  { label: "Cream", colors: { accentColor: "#FFF6EB" } },
+];
+
+const HEX = /^#[0-9a-f]{6}$/i;
+
+export function SettingsForm({ record, onChange }: FormProps) {
+  const set = (key: string) => (value: unknown) => onChange(setKey(record, key, value));
+  const start = HEX.test(text(record.accentColor)) ? text(record.accentColor) : DEFAULT_SETTINGS.accentColor;
+  // A blank end colour keeps the gradient fields open while typing; the JSON leaves it out.
+  const gradient = "accentColorEnd" in record;
+  const end = HEX.test(text(record.accentColorEnd)) ? text(record.accentColorEnd) : start;
+  const fill = (from: string, to?: string) => (to ? `linear-gradient(to right, ${from}, ${to})` : from);
+  const permissions = asObj(record.permissions);
+  const permission = (key: keyof typeof DEFAULT_SETTINGS.permissions) => ({
+    checked: typeof permissions[key] === "boolean" ? permissions[key] : DEFAULT_SETTINGS.permissions[key],
+    onChange: (checked: boolean) => set("permissions")({ ...permissions, [key]: checked }),
+  });
+
+  return (
+    <div className="space-y-5">
+      <Section title="Top strip">
+        <p className="-mt-1 text-[11px] text-muted">The band of colour across the top of every page.</p>
+        <div className="flex flex-wrap gap-1.5">
+          {STRIP_PRESETS.map(({ label, colors }) => {
+            const on =
+              start.toLowerCase() === colors.accentColor.toLowerCase() &&
+              (gradient ? end.toLowerCase() : undefined) === colors.accentColorEnd?.toLowerCase();
+            return (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={on}
+                onClick={() => onChange({ ...setKey(record, "accentColorEnd", undefined), ...colors })}
+                className="inline-flex items-center gap-2 rounded-md border border-black/10 bg-white px-2 py-1 text-xs hover:bg-black/[0.03] aria-pressed:border-ink"
+              >
+                <span
+                  className="h-2 w-8 rounded-full ring-1 ring-black/10 ring-inset"
+                  style={{ background: fill(colors.accentColor, colors.accentColorEnd) }}
+                />
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <Field label="Style">
+          <Select
+            value={gradient ? "gradient" : "solid"}
+            onChange={(value) =>
+              onChange(
+                value === "gradient" ? { ...record, accentColorEnd: start } : setKey(record, "accentColorEnd", undefined),
+              )
+            }
+            options={[
+              { value: "solid", label: "Solid colour" },
+              { value: "gradient", label: "Gradient, left to right" },
+            ]}
+          />
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label={gradient ? "From" : "Colour"}>
+            <ColorInput value={record.accentColor} fallback={DEFAULT_SETTINGS.accentColor} onChange={set("accentColor")} />
+          </Field>
+          {gradient && (
+            <Field label="To">
+              <ColorInput
+                value={record.accentColorEnd}
+                fallback={start}
+                onChange={(value) => onChange({ ...record, accentColorEnd: value })}
+              />
+            </Field>
+          )}
+        </div>
+      </Section>
+
+      <Section title="Links">
+        <Field label="Link colour" hint={'The "Pay online" link.'}>
+          <ColorInput value={record.linkColor} fallback={DEFAULT_SETTINGS.linkColor} onChange={set("linkColor")} />
+        </Field>
+      </Section>
+
+      <Section title="Format">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Locale" hint="Formats dates and amounts, e.g. en-GB, en-IN, en-US.">
+            <TextInput value={record.locale} placeholder={DEFAULT_SETTINGS.locale} onChange={set("locale")} />
+          </Field>
+          <Field label="Default currency" hint="Invoices can choose their own.">
+            <TextInput
+              value={record.currency}
+              placeholder={DEFAULT_SETTINGS.currency}
+              onChange={(value) => set("currency")(value.toUpperCase())}
+            />
+          </Field>
+          <Field label="Page size">
+            <Select
+              value={text(record.pageSize).toUpperCase() === "A4" ? "A4" : "LETTER"}
+              onChange={set("pageSize")}
+              options={[
+                { value: "LETTER", label: "US Letter" },
+                { value: "A4", label: "A4" },
+              ]}
+            />
+          </Field>
+        </div>
+      </Section>
+
+      <Section title="PDF permissions">
+        <p className="-mt-1 text-[11px] text-muted">Editing the PDF is always blocked.</p>
+        <Checkbox label="Printing" {...permission("printing")} />
+        <Checkbox label="Copying text" {...permission("copying")} />
+        <Checkbox label="Comments and annotations" {...permission("annotating")} />
       </Section>
     </div>
   );
