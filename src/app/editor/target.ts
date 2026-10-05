@@ -1,4 +1,4 @@
-/** What the editor is working on; `key` strings are used in the URL hash. */
+/** What the editor is working on; `key` strings identify it, e.g. as a React key. */
 export type EditTarget =
   | { kind: "invoice"; file?: string }
   | { kind: "customer"; id?: string }
