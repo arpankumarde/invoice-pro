@@ -14,7 +14,7 @@ import {
   TextArea,
   TextInput,
 } from "./fields.tsx";
-import { asList, asObj, isObj, nextNumber, type Obj, setKey, text, today } from "./json.ts";
+import { asList, asObj, isObj, newPayment, type Obj, setKey, text } from "./json.ts";
 
 interface FormProps {
   record: Obj;
@@ -269,19 +269,8 @@ export function InvoiceForm({
   const setPayments = (next: Obj[]) => onChange(setKey(record, "payments", next));
   const updatePayment = (index: number, key: string, value: unknown) =>
     setPayments(payments.map((payment, i) => (i === index ? setKey(payment, key, value) : payment)));
-  // Dated today, with the next receipt number, the amount still owed and the last payment's method.
   const recordPayment = () => {
-    const paid = payments.reduce((sum, payment) => sum + (typeof payment.amount === "number" ? payment.amount : 0), 0);
-    // toFixed drops floating-point noise such as 0.30000000000000004.
-    const remaining = total === undefined ? 0 : Number((total - paid).toFixed(6));
-    const method = text(payments.at(-1)?.method) || (record.bankAccount ? "Bank transfer" : "");
-    const payment: Obj = {
-      receiptNumber: nextNumber("RCT", [...receiptNumbers, ...payments.map((p) => text(p.receiptNumber))]),
-      date: today(),
-    };
-    if (remaining > 0) payment.amount = remaining;
-    if (method) payment.method = method;
-    setPayments([...payments, payment]);
+    setPayments([...payments, newPayment(record, { total, receiptNumbers })]);
     onRecordPayment?.(payments.length);
   };
 

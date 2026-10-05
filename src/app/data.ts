@@ -70,6 +70,9 @@ const subscribe = (listener: () => void) => {
   return () => listeners.delete(listener);
 };
 
+/** The latest data outside React, e.g. to re-check an edit right after refresh(). */
+export const latestSnapshot = () => (state.status === "ready" ? state.snapshot : undefined);
+
 export function useInvoiceData(): DataState {
   return useSyncExternalStore(subscribe, () => state);
 }

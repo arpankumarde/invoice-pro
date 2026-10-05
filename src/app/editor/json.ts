@@ -100,6 +100,39 @@ export function today() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
+/** Receipt numbers used by every invoice except `file`, so a new payment gets the next free one. */
+export const receiptNumbersOutside = (invoices: { file: string; data: unknown }[], file?: string) =>
+  invoices
+    .filter((inv) => inv.file !== file)
+    .flatMap((inv) => asList(asObj(inv.data).payments).map((payment) => text(asObj(payment).receiptNumber)))
+    .filter(Boolean);
+
+/** What is still owed on an invoice of `total` after the payments in its JSON. */
+export function amountRemaining(invoice: Obj, total: number) {
+  const paid = asList(invoice.payments)
+    .map(asObj)
+    .reduce((sum, payment) => sum + (typeof payment.amount === "number" ? payment.amount : 0), 0);
+  // toFixed drops floating-point noise such as 0.30000000000000004.
+  return Number((total - paid).toFixed(6));
+}
+
+/**
+ * A payment to add to `invoice`: dated today, with the next receipt number, the amount still owed
+ * (when the total is known) and the last payment's method.
+ */
+export function newPayment(invoice: Obj, { total, receiptNumbers }: { total?: number; receiptNumbers: string[] }): Obj {
+  const payments = asList(invoice.payments).map(asObj);
+  const remaining = total === undefined ? 0 : amountRemaining(invoice, total);
+  const method = text(payments.at(-1)?.method) || (invoice.bankAccount ? "Bank transfer" : "");
+  const payment: Obj = {
+    receiptNumber: nextNumber("RCT", [...receiptNumbers, ...payments.map((p) => text(p.receiptNumber))]),
+    date: today(),
+  };
+  if (remaining > 0) payment.amount = remaining;
+  if (method) payment.method = method;
+  return payment;
+}
+
 export const slug = (value: string) =>
   value
     .trim()

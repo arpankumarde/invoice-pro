@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { Link, Navigate, useNavigate, useOutletContext, useParams } from "react-router";
-import { DATA_FOLDER } from "../app/api.ts";
-import type { Snapshot } from "../app/data.ts";
+import { DATA_FOLDER, saveFile } from "../app/api.ts";
+import { refresh, type Snapshot } from "../app/data.ts";
+import { asList, asObj, isObj, tidy } from "../app/editor/json.ts";
 import { entryStatus, entryTitle, joinParts } from "../app/entries.ts";
 import { downloadPdf } from "../app/generate.ts";
 import { PdfPreview } from "../app/PdfPreview.tsx";
@@ -13,14 +15,16 @@ import {
   PaymentBadge,
   PencilIcon,
   PlusIcon,
+  ReceiptIcon,
   primaryButton,
   secondaryButton,
   StatusBadge,
 } from "../app/ui.tsx";
 import { usePdf } from "../app/usePdf.ts";
-import type { InvoiceEntry } from "../invoice/types.ts";
+import type { InvoiceEntry, InvoiceStatus } from "../invoice/types.ts";
 import type { Workspace } from "./Layout.tsx";
 import { documentPath, editPath } from "./paths.ts";
+import { PaymentsDialog } from "./PaymentsDialog.tsx";
 
 /** "/" and "/invoices/:invoiceId/:receipt?": an invoice, or one of its receipts, as the finished PDF. */
 export function InvoicePage() {
@@ -51,6 +55,28 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
   // The invoice itself, or the receipt named in the URL.
   const doc = invoice?.receipts.find((candidate) => candidate.id === `${entry.id}/${receipt}`) ?? invoice;
   const pdf = usePdf(doc, snapshot.images);
+  const [managingPayments, setManagingPayments] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string>();
+
+  // Writes the status into the invoice file the way the editor saves it. Works on invoices with
+  // errors too, as long as the file holds a JSON object.
+  const record = snapshot.raw.invoices.find((inv) => inv.file === entry.file)?.data;
+  const status = entryStatus(entry);
+  const paymentCount = asList(asObj(record).payments).length;
+  const setStatus = async (next: InvoiceStatus) => {
+    if (next === status || saving) return;
+    setSaving(true);
+    setSaveError(undefined);
+    try {
+      await saveFile(entry.file, tidy({ ...asObj(record), status: next }, "invoice"));
+      await refresh();
+    } catch (error) {
+      setSaveError((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <>
@@ -59,14 +85,27 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
           <div className="min-w-0">
             <div className="flex items-center gap-2.5">
               <h2 className="truncate text-lg font-semibold">{entryTitle(entry)}</h2>
-              <StatusBadge status={entryStatus(entry)} invalid={!entry.ok} />
+              {!entry.ok && <StatusBadge status={status} invalid />}
               {invoice && <PaymentBadge payment={invoice.summary.payment} />}
             </div>
             <p className="mt-0.5 truncate text-[13px] text-muted">
               {invoice && doc ? joinParts(invoice.summary.customer, doc.headline) : entry.file}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <StatusToggle status={status} disabled={saving || !isObj(record)} onChange={(next) => void setStatus(next)} />
+            <button
+              type="button"
+              disabled={!isObj(record)}
+              onClick={() => setManagingPayments(true)}
+              className={secondaryButton}
+            >
+              <ReceiptIcon />
+              {paymentCount === 0 ? "Record payment" : "Payments"}
+              {paymentCount > 0 && (
+                <span className="rounded bg-black/[0.06] px-1.5 text-[11px] tabular-nums text-muted">{paymentCount}</span>
+              )}
+            </button>
             <Link to={editPath({ kind: "invoice", file: entry.file })} className={secondaryButton}>
               <PencilIcon className="shrink-0" />
               Edit
@@ -84,7 +123,29 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
         </div>
       </header>
 
+      {managingPayments && (
+        <PaymentsDialog
+          snapshot={snapshot}
+          file={entry.file}
+          title={entryTitle(entry)}
+          invoice={invoice}
+          // Opens on the receipt being viewed.
+          initialIndex={doc?.kind === "receipt" ? invoice?.receipts.indexOf(doc) : undefined}
+          onClose={() => setManagingPayments(false)}
+          // Show the receipt of the payment that was selected, or the invoice when none was.
+          onSaved={(index) => {
+            setManagingPayments(false);
+            void navigate(documentPath(index === undefined ? entry.id : `${entry.id}/receipt-${index + 1}`));
+          }}
+        />
+      )}
+
       <div className="mx-auto max-w-[880px] px-4 py-6 sm:px-8">
+        {saveError && (
+          <p className="mb-6 rounded-lg bg-red-50 p-4 text-sm text-red-800" role="alert">
+            Could not change the status: {saveError}
+          </p>
+        )}
         {!entry.ok && (
           <Errors
             title="This invoice can't be generated yet"
@@ -110,5 +171,34 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
           ))}
       </div>
     </>
+  );
+}
+
+/** Draft or final, saved straight to the invoice file. */
+function StatusToggle({
+  status,
+  disabled,
+  onChange,
+}: {
+  status: InvoiceStatus;
+  disabled: boolean;
+  onChange: (status: InvoiceStatus) => void;
+}) {
+  return (
+    <div className="flex h-9 rounded-md bg-black/[0.05] p-0.5 text-[13px] font-medium" role="radiogroup" aria-label="Status">
+      {(["draft", "final"] as const).map((option) => (
+        <button
+          key={option}
+          type="button"
+          role="radio"
+          aria-checked={status === option}
+          disabled={disabled}
+          onClick={() => onChange(option)}
+          className="rounded px-3 text-muted transition enabled:hover:text-ink disabled:cursor-not-allowed aria-checked:bg-white aria-checked:text-ink aria-checked:shadow-sm"
+        >
+          {option === "draft" ? "Draft" : "Final"}
+        </button>
+      ))}
+    </div>
   );
 }

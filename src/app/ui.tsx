@@ -136,6 +136,14 @@ export function PlusIcon() {
   );
 }
 
+export function ReceiptIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M3.5 2.5h9v11l-1.5-1-1.5 1-1.5-1-1.5 1-1.5-1-1.5 1v-11zM6 6h4M6 8.5h4" />
+    </svg>
+  );
+}
+
 export function TrashIcon() {
   return (
     <svg {...iconProps}>

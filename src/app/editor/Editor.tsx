@@ -16,7 +16,19 @@ import {
 } from "../ui.tsx";
 import { usePdf } from "../usePdf.ts";
 import { InvoiceForm, PartyForm, SettingsForm } from "./forms.tsx";
-import { asList, asObj, isObj, nextNumber, type Obj, slug, text, tidy, today, toJson } from "./json.ts";
+import {
+  asList,
+  asObj,
+  isObj,
+  nextNumber,
+  type Obj,
+  receiptNumbersOutside,
+  slug,
+  text,
+  tidy,
+  today,
+  toJson,
+} from "./json.ts";
 import { type EditTarget, parseTargetKey, targetKey } from "./target.ts";
 
 const NEW_INVOICE_FILE = "invoices/(new invoice).json";
@@ -331,10 +343,7 @@ export function Editor({
                 "INV",
                 snapshot.entries.map((e) => (e.ok ? e.invoice.number : e.number)).filter(Boolean) as string[],
               )}
-              receiptNumbers={raw.invoices
-                .filter((inv) => inv.file !== target.file)
-                .flatMap((inv) => asList(asObj(inv.data).payments).map((payment) => text(asObj(payment).receiptNumber)))
-                .filter(Boolean)}
+              receiptNumbers={receiptNumbersOutside(raw.invoices, target.file)}
               total={invoice?.summary.total}
               onRecordPayment={(index) => {
                 setPreviewId(`${fileStem(target.file ?? NEW_INVOICE_FILE)}/receipt-${index + 1}`);
