@@ -124,11 +124,24 @@ export interface ResolvedInvoice extends ResolvedDocument {
     /** ISO date, for sorting. */
     sortKey: string;
     payment: PaymentStatus;
+    /** ISO code, e.g. "INR". */
+    currency: string;
     /** The invoice total in currency units (not minor units), e.g. to prefill a payment. */
     total: number;
+    /** What has been paid so far, in currency units. */
+    paid: number;
   };
 }
 
+/** `customerId` is set when the invoice names a customer from customers.json, even if it has errors. */
 export type InvoiceEntry =
-  | { id: string; file: string; ok: true; invoice: ResolvedInvoice }
-  | { id: string; file: string; ok: false; errors: string[]; status?: InvoiceStatus; number?: string };
+  | { id: string; file: string; customerId?: string; ok: true; invoice: ResolvedInvoice }
+  | {
+      id: string;
+      file: string;
+      customerId?: string;
+      ok: false;
+      errors: string[];
+      status?: InvoiceStatus;
+      number?: string;
+    };

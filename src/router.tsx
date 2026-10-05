@@ -1,4 +1,5 @@
 import { createBrowserRouter, Navigate } from "react-router";
+import { CustomerPage } from "./routes/CustomerPage.tsx";
 import { EditorPage } from "./routes/EditorPage.tsx";
 import { InvoicePage } from "./routes/InvoicePage.tsx";
 import { Layout } from "./routes/Layout.tsx";
@@ -13,6 +14,9 @@ export const router = createBrowserRouter([
       // The Invoices tab. "/" lands on the latest invoice.
       { index: true, Component: InvoicePage },
       { path: "invoices/:invoiceId/:receipt?", Component: InvoicePage },
+
+      // The Customers tab. "/customers" lands on the first customer.
+      { path: "customers/:customerId?", Component: CustomerPage },
 
       // The Editor tab. Without an id, the invoice and customer routes start a new record.
       {

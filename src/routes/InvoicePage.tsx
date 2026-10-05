@@ -3,7 +3,7 @@ import { Link, Navigate, useNavigate, useOutletContext, useParams } from "react-
 import { DATA_FOLDER, saveFile } from "../app/api.ts";
 import { refresh, type Snapshot } from "../app/data.ts";
 import { asList, asObj, isObj, tidy } from "../app/editor/json.ts";
-import { entryStatus, entryTitle, joinParts } from "../app/entries.ts";
+import { entryStatus, entryTitle } from "../app/entries.ts";
 import { downloadPdf } from "../app/generate.ts";
 import { PdfPreview } from "../app/PdfPreview.tsx";
 import {
@@ -23,7 +23,7 @@ import {
 import { usePdf } from "../app/usePdf.ts";
 import type { InvoiceEntry, InvoiceStatus } from "../invoice/types.ts";
 import type { Workspace } from "./Layout.tsx";
-import { documentPath, editPath } from "./paths.ts";
+import { customerPath, documentPath, editPath } from "./paths.ts";
 import { PaymentsDialog } from "./PaymentsDialog.tsx";
 
 /** "/" and "/invoices/:invoiceId/:receipt?": an invoice, or one of its receipts, as the finished PDF. */
@@ -89,7 +89,21 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
               {invoice && <PaymentBadge payment={invoice.summary.payment} />}
             </div>
             <p className="mt-0.5 truncate text-[13px] text-muted">
-              {invoice && doc ? joinParts(invoice.summary.customer, doc.headline) : entry.file}
+              {invoice && doc ? (
+                <>
+                  {entry.customerId && invoice.summary.customer ? (
+                    <Link to={customerPath(entry.customerId)} className="hover:text-ink hover:underline">
+                      {invoice.summary.customer}
+                    </Link>
+                  ) : (
+                    invoice.summary.customer
+                  )}
+                  {invoice.summary.customer && " · "}
+                  {doc.headline}
+                </>
+              ) : (
+                entry.file
+              )}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">

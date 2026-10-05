@@ -527,7 +527,9 @@ function resolveInvoice(file: string, raw: unknown, shared: Shared, errors: stri
       issueDate: issueDate && fmt.date(issueDate),
       sortKey: `${issueDate?.toISOString().slice(0, 10) ?? "0000-00-00"} ${number ?? id}`,
       payment: paidMinor === 0 ? "unpaid" : paidMinor < total ? "partial" : "paid",
+      currency,
       total: fmt.fromMinor(total),
+      paid: fmt.fromMinor(paidMinor),
     },
   };
 }
@@ -541,11 +543,13 @@ export function resolveAll(data: DataSet): InvoiceEntry[] {
     const id = fileStem(file);
     const errors = [...sharedErrors];
     const invoice = resolveInvoice(file, raw, shared, errors);
-    if (invoice && errors.length === 0) return { id, file, ok: true, invoice };
     const obj = isObj(raw) ? raw : {};
+    const customerId = typeof obj.customer === "string" ? obj.customer : undefined;
+    if (invoice && errors.length === 0) return { id, file, customerId, ok: true, invoice };
     return {
       id,
       file,
+      customerId,
       ok: false,
       errors,
       status: obj.status === "final" ? "final" : "draft",
@@ -586,7 +590,15 @@ export function resolveAll(data: DataSet): InvoiceEntry[] {
     }
     if (messages.length === 0) return entry;
     return entry.ok
-      ? { id: entry.id, file: entry.file, ok: false, errors: messages, status: entry.invoice.status, number }
+      ? {
+          id: entry.id,
+          file: entry.file,
+          customerId: entry.customerId,
+          ok: false,
+          errors: messages,
+          status: entry.invoice.status,
+          number,
+        }
       : { ...entry, errors: [...entry.errors, ...messages] };
   });
 }

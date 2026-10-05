@@ -11,6 +11,9 @@ export function documentPath(documentId: string) {
   return generatePath("/invoices/:invoiceId/:receipt?", { invoiceId, receipt });
 }
 
+/** A customer's page: their details and every invoice billed to them. */
+export const customerPath = (id: string) => generatePath("/customers/:customerId", { customerId: id });
+
 /** The editor page for a record. Invoices and customers without a file or id start a new one. */
 export function editPath(target: EditTarget) {
   if (target.kind === "invoice") {
