@@ -1,14 +1,17 @@
-import { createFormatters, parseIsoDate } from "./format.ts";
+import { createFormatters, type Formatters, parseIsoDate } from "./format.ts";
 import type {
+  AllocationRow,
   DataSet,
   InvoiceEntry,
   InvoiceStatus,
   LineItem,
   MetaRow,
   Party,
-  PaymentRow,
+  PaymentEntry,
+  Resolved,
   ResolvedDocument,
   ResolvedInvoice,
+  ResolvedReceipt,
   Settings,
   TaxId,
   TotalRow,
@@ -272,7 +275,36 @@ function safeFileName(value: string) {
   return value.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") || "invoice";
 }
 
-function resolveInvoice(file: string, raw: unknown, shared: Shared, errors: string[]): ResolvedInvoice | undefined {
+const pdfName = (base: string, status: InvoiceStatus) => `${safeFileName(base)}${status === "draft" ? "-DRAFT" : ""}.pdf`;
+
+/** An invoice read on its own, before the payments towards it are known. */
+interface InvoiceCore {
+  id: string;
+  status: InvoiceStatus;
+  number?: string;
+  issueDate?: Date;
+  dueDate?: Date;
+  currency: string;
+  fmt: Formatters;
+  billTo?: Party;
+  /** Tells customers apart: the id in customers.json, or the inline customer as JSON. */
+  customerKey: string;
+  totalMinor: number;
+  /** Subtotal, taxes and total. */
+  totals: TotalRow[];
+  meta: MetaRow[];
+  payUrl?: string;
+  bankAccount?: MetaRow[];
+  memo?: string;
+  footer?: string;
+  /** Parts of the invoice document that come straight from the invoice file. */
+  common: Pick<
+    ResolvedDocument,
+    "status" | "settings" | "seller" | "logo" | "billTo" | "hasQuantityColumn" | "hasTaxColumn" | "items" | "footnotes"
+  >;
+}
+
+function readInvoice(file: string, raw: unknown, shared: Shared, errors: string[]): InvoiceCore | undefined {
   if (!isObj(raw)) {
     errors.push("The file must contain a JSON object");
     return undefined;
@@ -302,6 +334,7 @@ function resolveInvoice(file: string, raw: unknown, shared: Shared, errors: stri
   } else if (!isBlank(raw.customer)) {
     billTo = readParty(raw.customer, "customer.", errors);
   }
+  const customerKey = typeof raw.customer === "string" ? `id:${raw.customer}` : JSON.stringify(billTo ?? null);
 
   const defaultTaxes = strList(raw, "taxes", at, errors);
   const rawItems = list(raw, "items", at, errors);
@@ -347,7 +380,7 @@ function resolveInvoice(file: string, raw: unknown, shared: Shared, errors: stri
     };
   });
 
-  // Custom fields follow the dates, on the invoice and on its receipts.
+  // Custom fields follow the dates.
   const customFields: MetaRow[] = [];
   list(raw, "customFields", at, errors).forEach((entry, i) => {
     const where = `customFields[${i}].`;
@@ -377,33 +410,6 @@ function resolveInvoice(file: string, raw: unknown, shared: Shared, errors: stri
 
   const memo = optStr(raw, "memo", at, errors);
   const footer = optStr(raw, "footer", at, errors);
-  const receiptFooter = optStr(raw, "receiptFooter", at, errors);
-
-  // Each payment gets a receipt, which lists the payments up to and including it. So the list
-  // has to be in the order the payments were made.
-  let lastPaid: Date | undefined;
-  const payments = list(raw, "payments", at, errors).map((entry, i) => {
-    const where = `payments[${i}].`;
-    if (!isObj(entry)) {
-      errors.push(`payments[${i}] must be an object`);
-      return undefined;
-    }
-    const amount = optNum(entry, "amount", where, errors);
-    if (amount === undefined && isBlank(entry.amount)) errors.push(`${where}amount is required`);
-    if (amount !== undefined && amount <= 0) errors.push(`${where}amount must be greater than 0`);
-    const date = optDate(entry, "date", where, errors);
-    if (date && lastPaid && date < lastPaid) {
-      errors.push(`${where}date is before the payment above it; list payments in the order they were made`);
-    }
-    lastPaid = date ?? lastPaid;
-    return {
-      receiptNumber: optStr(entry, "receiptNumber", where, errors),
-      date,
-      amountMinor: fmt.toMinor(amount ?? 0),
-      method: optStr(entry, "method", where, errors),
-      details: strList(entry, "details", where, errors),
-    };
-  });
 
   if (errors.length > 0) return undefined;
 
@@ -447,158 +453,363 @@ function resolveInvoice(file: string, raw: unknown, shared: Shared, errors: stri
       value: fmt.money(taxMinor),
     });
   }
-  const total = subtotal + taxTotal;
-  totals.push({ label: "Total", value: fmt.money(total) });
-
-  const paidMinor = payments.reduce((sum, payment) => sum + (payment?.amountMinor ?? 0), 0);
-  if (paidMinor > total) {
-    errors.push(`payments add up to ${fmt.money(paidMinor)}, more than the invoice total of ${fmt.money(total)}`);
-    return undefined;
-  }
-
-  const id = fileStem(file);
-  const pdfName = (base: string) => `${safeFileName(base)}${status === "draft" ? "-DRAFT" : ""}.pdf`;
-
-  // Parts an invoice shares with its receipts.
-  const common = {
-    file,
-    status,
-    settings: shared.settings,
-    seller: shared.seller,
-    logo: shared.logo,
-    billTo,
-    hasQuantityColumn: items.some((item) => item.quantity),
-    hasTaxColumn: groups.size > 0,
-    items,
-    footnotes: [...noteNumbers.entries()].map(([note, n]) => `[${n}] ${note}`),
-  };
-
-  // With no errors recorded, every payment was read.
-  const made = payments.map((payment) => payment!);
-  const history: PaymentRow[] = made.map((payment) => ({
-    method: payment.method ?? "",
-    details: payment.details,
-    date: payment.date ? fmt.date(payment.date) : "",
-    amount: fmt.money(payment.amountMinor),
-    receiptNumber: payment.receiptNumber ?? "",
-  }));
-  let paidSoFar = 0;
-  const receipts = made.map(({ receiptNumber, date, amountMinor }, i): ResolvedDocument => {
-    paidSoFar += amountMinor;
-    const receiptMeta: MetaRow[] = [];
-    if (number) receiptMeta.push({ label: "Invoice number", value: number, strong: true });
-    if (receiptNumber) receiptMeta.push({ label: "Receipt number", value: receiptNumber });
-    if (date) receiptMeta.push({ label: "Date paid", value: fmt.date(date) });
-    receiptMeta.push(...customFields);
-    const receiptTotals: TotalRow[] = [...totals, { label: "Amount paid", value: fmt.money(paidSoFar), strong: true }];
-    if (paidSoFar < total) receiptTotals.push({ label: "Amount remaining", value: fmt.money(total - paidSoFar) });
-    return {
-      ...common,
-      kind: "receipt",
-      id: `${id}/receipt-${i + 1}`,
-      number: receiptNumber,
-      fileName: pdfName(`Receipt-${receiptNumber ?? `${number ?? id}-${i + 1}`}`),
-      meta: receiptMeta,
-      headline: `${fmt.money(amountMinor)} paid${date ? ` on ${fmt.date(date)}` : ""}`,
-      totals: receiptTotals,
-      payments: history.slice(0, i + 1),
-      footer: receiptFooter,
-    };
-  });
+  const totalMinor = subtotal + taxTotal;
+  totals.push({ label: "Total", value: fmt.money(totalMinor) });
 
   return {
-    ...common,
-    kind: "invoice",
-    id,
+    id: fileStem(file),
+    status,
     number,
-    fileName: pdfName(`Invoice-${number ?? id}`),
+    issueDate,
+    dueDate,
+    currency,
+    fmt,
+    billTo,
+    customerKey,
+    totalMinor,
+    totals,
     meta,
-    headline: dueDate ? `${fmt.money(total)} due ${fmt.date(dueDate)}` : `${fmt.money(total)} due`,
     payUrl,
-    bankAccount: bankAccount?.length ? bankAccount : undefined,
+    bankAccount,
     memo,
-    totals: [...totals, { label: "Amount due", value: fmt.money(total), strong: true }],
-    payments: [],
     footer,
+    common: {
+      status,
+      settings: shared.settings,
+      seller: shared.seller,
+      logo: shared.logo,
+      billTo,
+      hasQuantityColumn: items.some((item) => item.quantity),
+      hasTaxColumn: groups.size > 0,
+      items,
+      footnotes: [...noteNumbers.entries()].map(([note, n]) => `[${n}] ${note}`),
+    },
+  };
+}
+
+/* ---------- payments ---------- */
+
+/** A payment file read on its own, before the invoices it names are checked. */
+interface PaymentCore {
+  id: string;
+  file: string;
+  receiptNumber?: string;
+  date?: Date;
+  amount?: number;
+  method?: string;
+  details: string[];
+  footer?: string;
+  allocations: { invoice: string; amount: number }[];
+  /** Payments towards an invoice are listed in this order: by date, then by file name. */
+  sortKey: string;
+}
+
+function readPayment(file: string, raw: unknown, errors: string[]): PaymentCore | undefined {
+  if (!isObj(raw)) {
+    errors.push("The file must contain a JSON object");
+    return undefined;
+  }
+  const at = "";
+  const amount = optNum(raw, "amount", at, errors);
+  if (amount === undefined && isBlank(raw.amount)) errors.push("amount is required");
+  if (amount !== undefined && amount <= 0) errors.push("amount must be greater than 0");
+  const date = optDate(raw, "date", at, errors);
+
+  const rawAllocations = list(raw, "allocations", at, errors);
+  if (rawAllocations.length === 0) errors.push("allocations must name at least one invoice this payment is for");
+  const allocations: PaymentCore["allocations"] = [];
+  rawAllocations.forEach((entry, i) => {
+    const where = `allocations[${i}].`;
+    if (!isObj(entry)) return errors.push(`allocations[${i}] must be an object with invoice and amount`);
+    const invoice = optStr(entry, "invoice", where, errors);
+    if (!invoice) errors.push(`${where}invoice is required`);
+    else if (allocations.some((allocation) => allocation.invoice === invoice)) {
+      errors.push(`${where}invoice "${invoice}" is listed more than once`);
+    }
+    const share = optNum(entry, "amount", where, errors);
+    if (share === undefined && isBlank(entry.amount)) errors.push(`${where}amount is required`);
+    if (share !== undefined && share <= 0) errors.push(`${where}amount must be greater than 0`);
+    if (invoice && share !== undefined) allocations.push({ invoice, amount: share });
+  });
+
+  const id = fileStem(file);
+  return {
+    id,
+    file,
+    receiptNumber: optStr(raw, "receiptNumber", at, errors),
+    date,
+    amount,
+    method: optStr(raw, "method", at, errors),
+    details: strList(raw, "details", at, errors),
+    footer: optStr(raw, "footer", at, errors),
+    allocations,
+    sortKey: `${date?.toISOString().slice(0, 10) ?? "9999-12-31"} ${id}`,
+  };
+}
+
+/** Each invoice's payments in the order they were made, with the share each put towards it. */
+type Histories = Map<string, { payment: PaymentCore; amountMinor: number }[]>;
+
+/**
+ * One receipt per payment: the amount and how it was paid, then each invoice it went towards with
+ * what had been paid on it before and what is left after.
+ */
+function buildReceipt(payment: PaymentCore, invoices: InvoiceCore[], histories: Histories): ResolvedReceipt {
+  const { fmt } = invoices[0];
+  const amountMinor = fmt.toMinor(payment.amount!);
+  const { receiptNumber, date } = payment;
+  const status: InvoiceStatus = invoices.some((invoice) => invoice.status === "draft") ? "draft" : "final";
+
+  const meta: MetaRow[] = [];
+  if (receiptNumber) meta.push({ label: "Receipt number", value: receiptNumber, strong: true });
+  if (date) meta.push({ label: "Date paid", value: fmt.date(date) });
+  const allocations: AllocationRow[] = invoices.map((invoice) => {
+    const history = histories.get(invoice.id)!;
+    const at = history.findIndex((entry) => entry.payment === payment);
+    const before = history.slice(0, at).reduce((sum, entry) => sum + entry.amountMinor, 0);
+    const share = history[at].amountMinor;
+    return {
+      invoice: invoice.number ?? invoice.id,
+      issueDate: invoice.issueDate ? fmt.shortDate(invoice.issueDate) : "",
+      total: fmt.money(invoice.totalMinor),
+      paidBefore: fmt.money(before),
+      amount: fmt.money(share),
+      balance: fmt.money(invoice.totalMinor - before - share),
+    };
+  });
+  const { settings, seller, logo, billTo } = invoices[0].common;
+  return {
+    kind: "receipt",
+    id: payment.id,
+    file: payment.file,
+    status,
+    number: receiptNumber,
+    fileName: pdfName(`Receipt-${receiptNumber ?? payment.id}`, status),
+    settings,
+    seller,
+    logo,
+    billTo,
+    meta,
+    headline: `${fmt.money(amountMinor)} paid${date ? ` on ${fmt.date(date)}` : ""}`,
+    memo: [payment.method, ...payment.details].filter(Boolean).join(" · ") || undefined,
+    hasQuantityColumn: false,
+    hasTaxColumn: false,
+    items: [],
+    totals: [{ label: "Amount paid", value: fmt.money(amountMinor), strong: true }],
+    allocations,
+    footnotes: [],
+    footer: payment.footer,
+    summary: {
+      amount: fmt.money(amountMinor),
+      date: date && fmt.date(date),
+      sortKey: payment.sortKey,
+      invoices: invoices.map((invoice) => invoice.id),
+    },
+  };
+}
+
+function buildInvoice(invoice: InvoiceCore, file: string, receipts: ResolvedReceipt[], paidMinor: number): ResolvedInvoice {
+  const { fmt, totalMinor, number, issueDate, dueDate, status } = invoice;
+  return {
+    ...invoice.common,
+    kind: "invoice",
+    id: invoice.id,
+    file,
+    number,
+    fileName: pdfName(`Invoice-${number ?? invoice.id}`, status),
+    meta: invoice.meta,
+    headline: dueDate ? `${fmt.money(totalMinor)} due ${fmt.date(dueDate)}` : `${fmt.money(totalMinor)} due`,
+    payUrl: invoice.payUrl,
+    bankAccount: invoice.bankAccount?.length ? invoice.bankAccount : undefined,
+    memo: invoice.memo,
+    totals: [...invoice.totals, { label: "Amount due", value: fmt.money(totalMinor), strong: true }],
+    allocations: [],
+    footer: invoice.footer,
     receipts,
     summary: {
-      customer: billTo?.name,
-      amountDue: fmt.money(total),
+      customer: invoice.billTo?.name,
+      amountDue: fmt.money(totalMinor),
       issueDate: issueDate && fmt.date(issueDate),
-      sortKey: `${issueDate?.toISOString().slice(0, 10) ?? "0000-00-00"} ${number ?? id}`,
-      payment: paidMinor === 0 ? "unpaid" : paidMinor < total ? "partial" : "paid",
-      currency,
-      total: fmt.fromMinor(total),
+      sortKey: `${issueDate?.toISOString().slice(0, 10) ?? "0000-00-00"} ${number ?? invoice.id}`,
+      payment: paidMinor === 0 ? "unpaid" : paidMinor < totalMinor ? "partial" : "paid",
+      currency: invoice.currency,
+      total: fmt.fromMinor(totalMinor),
       paid: fmt.fromMinor(paidMinor),
     },
   };
 }
 
-/** Validates the whole data folder and turns each invoice file into something renderable. */
-export function resolveAll(data: DataSet): InvoiceEntry[] {
+/* ---------- the whole folder ---------- */
+
+/** Files whose `key` (an invoice or receipt number) is also used by another file. */
+function clashes<T extends { file: string }>(items: T[], key: (item: T) => string | undefined) {
+  const byKey = new Map<string, string[]>();
+  for (const item of items) {
+    const value = key(item);
+    if (value) byKey.set(value, [...(byKey.get(value) ?? []), item.file]);
+  }
+  return (item: T) => {
+    const value = key(item);
+    const others = value ? byKey.get(value)!.filter((file) => file !== item.file) : [];
+    return { value, others: others.map(fileStem) };
+  };
+}
+
+/**
+ * Validates the whole data folder and turns each invoice and payment file into something
+ * renderable. An invoice is only valid when every payment towards it is, and a payment only when
+ * every invoice it pays is: otherwise what an invoice shows as paid would be a guess.
+ */
+export function resolveAll(data: DataSet): Resolved {
   const sharedErrors: string[] = [];
   const shared = readShared(data, sharedErrors);
 
-  const entries: InvoiceEntry[] = data.invoices.map(({ file, data: raw }) => {
-    const id = fileStem(file);
+  const invoices = data.invoices.map(({ file, data: raw }) => {
     const errors = [...sharedErrors];
-    const invoice = resolveInvoice(file, raw, shared, errors);
+    const core = readInvoice(file, raw, shared, errors);
     const obj = isObj(raw) ? raw : {};
-    const customerId = typeof obj.customer === "string" ? obj.customer : undefined;
-    if (invoice && errors.length === 0) return { id, file, customerId, ok: true, invoice };
     return {
-      id,
+      id: fileStem(file),
       file,
-      customerId,
-      ok: false,
       errors,
-      status: obj.status === "final" ? "final" : "draft",
-      number: typeof obj.number === "string" ? obj.number : undefined,
+      core,
+      customerId: typeof obj.customer === "string" ? obj.customer : undefined,
+      status: core?.status ?? (obj.status === "final" ? "final" : "draft"),
+      number: core ? core.number : typeof obj.number === "string" ? obj.number : undefined,
     };
   });
+  const invoiceById = new Map(invoices.map((invoice) => [invoice.id, invoice]));
+  const label = (invoice: (typeof invoices)[number]) => invoice.number ?? invoice.id;
 
-  // Invoice numbers and receipt numbers must be unique across the folder. Receipt numbers are
-  // read from the raw files, so a clash is reported even on an invoice with other errors.
-  const byNumber = new Map<string, string[]>();
-  for (const entry of entries) {
-    const number = entry.ok ? entry.invoice.number : entry.number;
-    if (number) byNumber.set(number, [...(byNumber.get(number) ?? []), entry.file]);
-  }
-  const receiptNumbers = data.invoices.map(({ data: raw }) =>
-    (isObj(raw) && Array.isArray(raw.payments) ? raw.payments : [])
-      .map((payment) => (isObj(payment) && typeof payment.receiptNumber === "string" ? payment.receiptNumber.trim() : ""))
-      .filter(Boolean),
-  );
-  const byReceipt = new Map<string, string[]>();
-  data.invoices.forEach(({ file }, i) => {
-    for (const receipt of receiptNumbers[i]) byReceipt.set(receipt, [...(byReceipt.get(receipt) ?? []), file]);
+  const payments = data.payments.map(({ file, data: raw }) => {
+    const errors: string[] = [];
+    const core = readPayment(file, raw, errors);
+    const obj = isObj(raw) ? raw : {};
+    // Read loosely, so a payment with errors still shows up on its invoices.
+    const invoiceIds = (Array.isArray(obj.allocations) ? obj.allocations : [])
+      .map((entry) => (isObj(entry) && typeof entry.invoice === "string" ? entry.invoice.trim() : ""))
+      .filter(Boolean);
+    const receiptNumber = typeof obj.receiptNumber === "string" ? obj.receiptNumber.trim() || undefined : undefined;
+    return { id: fileStem(file), file, errors, core, invoiceIds, receiptNumber };
   });
 
-  return entries.map((entry, i) => {
-    const messages: string[] = [];
-    const number = entry.ok ? entry.invoice.number : entry.number;
-    const clashes = number ? byNumber.get(number)!.filter((f) => f !== entry.file) : [];
-    if (clashes.length > 0) messages.push(`Invoice number "${number}" is also used by ${clashes.map(fileStem).join(", ")}`);
-    for (const receipt of new Set(receiptNumbers[i])) {
-      const files = byReceipt.get(receipt)!;
-      const others = [...new Set(files.filter((f) => f !== entry.file))];
-      if (others.length > 0) {
-        messages.push(`Receipt number "${receipt}" is also used by ${others.map(fileStem).join(", ")}`);
-      } else if (files.length > 1) {
-        messages.push(`Receipt number "${receipt}" is used by more than one payment`);
+  // Invoice numbers and receipt numbers must be unique across the folder.
+  const invoiceClash = clashes(invoices, (invoice) => invoice.number);
+  for (const invoice of invoices) {
+    const { value, others } = invoiceClash(invoice);
+    if (others.length > 0) invoice.errors.push(`Invoice number "${value}" is also used by ${others.join(", ")}`);
+  }
+  const receiptClash = clashes(payments, (payment) => payment.receiptNumber);
+  for (const payment of payments) {
+    const { value, others } = receiptClash(payment);
+    if (others.length > 0) payment.errors.push(`Receipt number "${value}" is also used by ${others.join(", ")}`);
+  }
+
+  // Each payment against the invoices it names.
+  for (const payment of payments) {
+    const { core } = payment;
+    if (!core) continue;
+    const targets = core.allocations.map(({ invoice }, i) => {
+      const target = invoiceById.get(invoice);
+      if (!target) payment.errors.push(`allocations[${i}].invoice: there is no invoice ${invoice} in the invoices folder`);
+      return target?.core;
+    });
+    const known = targets.filter((target) => target !== undefined);
+    if (new Set(known.map((target) => target.customerKey)).size > 1) {
+      payment.errors.push("allocations must all be invoices billed to the same customer");
+    }
+    if (new Set(known.map((target) => target.currency)).size > 1) {
+      payment.errors.push("allocations must all be invoices in the same currency");
+    }
+    if (payment.errors.length === 0 && known.length === targets.length && core.amount !== undefined) {
+      const { fmt } = known[0];
+      const allocated = core.allocations.reduce((sum, allocation) => sum + fmt.toMinor(allocation.amount), 0);
+      if (allocated !== fmt.toMinor(core.amount)) {
+        payment.errors.push(
+          `the allocations add up to ${fmt.money(allocated)}, but the amount received is ${fmt.money(fmt.toMinor(core.amount))}`,
+        );
       }
     }
-    if (messages.length === 0) return entry;
-    return entry.ok
-      ? {
-          id: entry.id,
-          file: entry.file,
-          customerId: entry.customerId,
-          ok: false,
-          errors: messages,
-          status: entry.invoice.status,
-          number,
-        }
-      : { ...entry, errors: [...entry.errors, ...messages] };
-  });
+  }
+
+  // No invoice may be paid more than its total.
+  for (const invoice of invoices) {
+    if (!invoice.core) continue;
+    const { fmt, totalMinor } = invoice.core;
+    const paidMinor = payments
+      .flatMap((payment) => payment.core?.allocations ?? [])
+      .filter((allocation) => allocation.invoice === invoice.id)
+      .reduce((sum, allocation) => sum + fmt.toMinor(allocation.amount), 0);
+    if (paidMinor > totalMinor) {
+      invoice.errors.push(`payments add up to ${fmt.money(paidMinor)}, more than the invoice total of ${fmt.money(totalMinor)}`);
+    }
+  }
+
+  // A problem on either side makes the other unusable too, until nothing changes.
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const payment of payments) {
+      if (payment.errors.length > 0) continue;
+      for (const id of payment.invoiceIds) {
+        const invoice = invoiceById.get(id)!;
+        if (invoice.errors.length === 0) continue;
+        payment.errors.push(`${label(invoice)} can't be generated: ${invoice.errors.join("; ")}`);
+        changed = true;
+      }
+    }
+    for (const invoice of invoices) {
+      if (invoice.errors.length > 0) continue;
+      for (const payment of payments) {
+        if (payment.errors.length === 0 || !payment.invoiceIds.includes(invoice.id)) continue;
+        invoice.errors.push(`Payment ${payment.receiptNumber ?? payment.id} has problems; fix ${payment.file}`);
+        changed = true;
+      }
+    }
+  }
+
+  // From here on, every payment without errors pays only invoices without errors, and the other way round.
+  const valid = payments
+    .filter((payment) => payment.errors.length === 0)
+    .map((payment) => payment.core!)
+    .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  const histories: Histories = new Map();
+  for (const payment of valid) {
+    for (const allocation of payment.allocations) {
+      const { fmt } = invoiceById.get(allocation.invoice)!.core!;
+      const history = histories.get(allocation.invoice) ?? [];
+      history.push({ payment, amountMinor: fmt.toMinor(allocation.amount) });
+      histories.set(allocation.invoice, history);
+    }
+  }
+  const receipts = new Map(
+    valid.map((payment) => [
+      payment.id,
+      buildReceipt(
+        payment,
+        payment.allocations.map((allocation) => invoiceById.get(allocation.invoice)!.core!),
+        histories,
+      ),
+    ]),
+  );
+
+  return {
+    invoices: invoices.map(({ id, file, errors, core, customerId, status, number }): InvoiceEntry => {
+      if (errors.length > 0 || !core) return { id, file, customerId, ok: false, errors, status, number };
+      const history = histories.get(id) ?? [];
+      const paidMinor = history.reduce((sum, entry) => sum + entry.amountMinor, 0);
+      const invoice = buildInvoice(
+        core,
+        file,
+        history.map((entry) => receipts.get(entry.payment.id)!),
+        paidMinor,
+      );
+      return { id, file, customerId, ok: true, invoice };
+    }),
+    payments: payments.map(({ id, file, errors, invoiceIds, receiptNumber }): PaymentEntry => {
+      const customerId = invoiceById.get(invoiceIds[0] ?? "")?.customerId;
+      const receipt = receipts.get(id);
+      if (errors.length > 0 || !receipt) return { id, file, invoiceIds, customerId, ok: false, errors, receiptNumber };
+      return { id, file, invoiceIds, customerId, ok: true, receipt };
+    }),
+  };
 }

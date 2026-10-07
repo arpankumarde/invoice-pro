@@ -34,11 +34,10 @@ const KEY_ORDER: Record<string, string[]> = {
     "bankAccount",
     "memo",
     "footer",
-    "payments",
-    "receiptFooter",
   ],
   items: ["description", "details", "period", "quantity", "unitPrice", "taxes"],
-  payments: ["receiptNumber", "date", "amount", "method", "details"],
+  payment: ["receiptNumber", "date", "amount", "method", "details", "allocations", "footer"],
+  allocations: ["invoice", "amount"],
   party: ["name", "address", "email", "phone", "taxIds", "logo", "bankAccounts"],
   bankAccounts: ["id", ...BANK_ORDER],
   bankAccount: BANK_ORDER,
@@ -51,7 +50,7 @@ const KEY_ORDER: Record<string, string[]> = {
 };
 
 /** Objects whose children are named by their key; in any other object the children share its context. */
-const NAMED_CHILDREN = new Set(["invoice", "items", "party", "settings", "bankAccounts", "bankAccount"]);
+const NAMED_CHILDREN = new Set(["invoice", "payment", "items", "party", "settings", "bankAccounts", "bankAccount"]);
 
 function sortKeys(obj: Obj, order: string[] | undefined): Obj {
   if (!order) return obj;
@@ -100,37 +99,49 @@ export function today() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-/** Receipt numbers used by every invoice except `file`, so a new payment gets the next free one. */
-export const receiptNumbersOutside = (invoices: { file: string; data: unknown }[], file?: string) =>
-  invoices
-    .filter((inv) => inv.file !== file)
-    .flatMap((inv) => asList(asObj(inv.data).payments).map((payment) => text(asObj(payment).receiptNumber)))
+type Files = { file: string; data: unknown }[];
+
+/** Rounds away floating-point noise such as 0.30000000000000004. */
+export const roundMoney = (value: number) => Number(value.toFixed(6));
+
+/** Every receipt number in use, except by the payment in `exceptFile`, so a new payment gets the next free one. */
+export const receiptNumbersOutside = (payments: Files, exceptFile?: string) =>
+  payments
+    .filter((payment) => payment.file !== exceptFile)
+    .map((payment) => text(asObj(payment.data).receiptNumber))
     .filter(Boolean);
 
-/** What is still owed on an invoice of `total` after the payments in its JSON. */
-export function amountRemaining(invoice: Obj, total: number) {
-  const paid = asList(invoice.payments)
-    .map(asObj)
-    .reduce((sum, payment) => sum + (typeof payment.amount === "number" ? payment.amount : 0), 0);
-  // toFixed drops floating-point noise such as 0.30000000000000004.
-  return Number((total - paid).toFixed(6));
+/** How much each invoice (by id) has been paid by every payment except the one in `exceptFile`. */
+export function paidOutside(payments: Files, exceptFile?: string) {
+  const paid = new Map<string, number>();
+  for (const payment of payments) {
+    if (payment.file === exceptFile) continue;
+    for (const allocation of asList(asObj(payment.data).allocations).map(asObj)) {
+      const invoice = text(allocation.invoice);
+      if (invoice && typeof allocation.amount === "number") {
+        paid.set(invoice, roundMoney((paid.get(invoice) ?? 0) + allocation.amount));
+      }
+    }
+  }
+  return paid;
 }
 
-/**
- * A payment to add to `invoice`: dated today, with the next receipt number, the amount still owed
- * (when the total is known) and the last payment's method.
- */
-export function newPayment(invoice: Obj, { total, receiptNumbers }: { total?: number; receiptNumbers: string[] }): Obj {
-  const payments = asList(invoice.payments).map(asObj);
-  const remaining = total === undefined ? 0 : amountRemaining(invoice, total);
-  const method = text(payments.at(-1)?.method) || (invoice.bankAccount ? "Bank transfer" : "");
-  const payment: Obj = {
-    receiptNumber: nextNumber("RCT", [...receiptNumbers, ...payments.map((p) => text(p.receiptNumber))]),
-    date: today(),
-  };
-  if (remaining > 0) payment.amount = remaining;
-  if (method) payment.method = method;
-  return payment;
+/** Spreads `amount` over the invoices in the order given, each getting up to what it still owes. */
+export function fillInOrder(amount: number, invoices: { id: string; owed: number }[]) {
+  const shares = new Map<string, number>();
+  let left = amount;
+  for (const { id, owed } of invoices) {
+    const share = roundMoney(Math.min(left, owed));
+    if (share <= 0) continue;
+    shares.set(id, share);
+    left = roundMoney(left - share);
+  }
+  return shares;
+}
+
+/** A payment to record: dated today, with the next receipt number. */
+export function newPayment(receiptNumbers: string[], method?: string): Obj {
+  return { receiptNumber: nextNumber("RCT", receiptNumbers), date: today(), ...(method ? { method } : {}) };
 }
 
 export const slug = (value: string) =>

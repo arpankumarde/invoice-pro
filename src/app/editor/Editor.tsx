@@ -22,7 +22,6 @@ import {
   isObj,
   nextNumber,
   type Obj,
-  receiptNumbersOutside,
   slug,
   text,
   tidy,
@@ -112,7 +111,7 @@ function previewEntry({ raw, entries }: Snapshot, target: EditTarget, record: Ob
       ),
     };
   }
-  return file ? resolveAll(data).find((entry) => entry.file === file) : undefined;
+  return file ? resolveAll(data).invoices.find((entry) => entry.file === file) : undefined;
 }
 
 function useDebounced<T extends string>(value: T, delay: number) {
@@ -222,7 +221,10 @@ export function Editor({
 
   const remove = async () => {
     if (target.kind === "invoice" && target.file) {
-      if (!window.confirm(`Delete ${title.replace(/^Edit /, "")}? This removes ${DATA_FOLDER}/${target.file}.`)) return;
+      const id = fileStem(target.file);
+      const paying = raw.payments.filter((p) => asList(asObj(p.data).allocations).some((a) => asObj(a).invoice === id)).length;
+      const warning = paying > 0 ? ` ${paying} payment(s) go towards it and will need fixing.` : "";
+      if (!window.confirm(`Delete ${title.replace(/^Edit /, "")}? This removes ${DATA_FOLDER}/${target.file}.${warning}`)) return;
     } else if (target.kind === "customer" && target.id) {
       const using = raw.invoices.filter((inv) => asObj(inv.data).customer === target.id).length;
       const warning = using > 0 ? ` ${using} invoice(s) use this customer and will need another one.` : "";
@@ -343,12 +345,6 @@ export function Editor({
                 "INV",
                 snapshot.entries.map((e) => (e.ok ? e.invoice.number : e.number)).filter(Boolean) as string[],
               )}
-              receiptNumbers={receiptNumbersOutside(raw.invoices, target.file)}
-              total={invoice?.summary.total}
-              onRecordPayment={(index) => {
-                setPreviewId(`${fileStem(target.file ?? NEW_INVOICE_FILE)}/receipt-${index + 1}`);
-                setTab("preview");
-              }}
             />
           ) : target.kind === "settings" ? (
             <SettingsForm record={record} onChange={updateRecord} />

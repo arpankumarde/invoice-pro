@@ -14,7 +14,7 @@ import {
   TextArea,
   TextInput,
 } from "./fields.tsx";
-import { asList, asObj, isObj, newPayment, type Obj, setKey, text } from "./json.ts";
+import { asList, asObj, isObj, type Obj, setKey, text } from "./json.ts";
 
 interface FormProps {
   record: Obj;
@@ -204,18 +204,9 @@ export function InvoiceForm({
   onChange,
   raw,
   suggestedNumber,
-  receiptNumbers,
-  total,
-  onRecordPayment,
 }: FormProps & {
   raw: DataSet;
   suggestedNumber?: string;
-  /** Receipt numbers used by other invoices, so a new payment gets the next free one. */
-  receiptNumbers: string[];
-  /** The invoice total, when the invoice is valid; a new payment is prefilled with what is left. */
-  total?: number;
-  /** Called with the new payment's index after "Record payment". */
-  onRecordPayment?: (index: number) => void;
 }) {
   const set = (key: string) => (value: unknown) => onChange(setKey(record, key, value));
 
@@ -264,15 +255,6 @@ export function InvoiceForm({
   const setItems = (next: Obj[]) => onChange(setKey(record, "items", next));
   const updateItem = (index: number, update: (item: Obj) => Obj) =>
     setItems(items.map((item, i) => (i === index ? update(item) : item)));
-
-  const payments = asList(record.payments).map(asObj);
-  const setPayments = (next: Obj[]) => onChange(setKey(record, "payments", next));
-  const updatePayment = (index: number, key: string, value: unknown) =>
-    setPayments(payments.map((payment, i) => (i === index ? setKey(payment, key, value) : payment)));
-  const recordPayment = () => {
-    setPayments([...payments, newPayment(record, { total, receiptNumbers })]);
-    onRecordPayment?.(payments.length);
-  };
 
   return (
     <div className="space-y-5">
@@ -434,68 +416,6 @@ export function InvoiceForm({
         </Field>
       </Section>
 
-      <Section title="Payments received">
-        <p className="-mt-1 text-[11px] text-muted">
-          Each payment gets its own receipt, listing the payments up to it. Add them in the order they were made.
-        </p>
-        {payments.map((payment, index) => (
-          <div key={index} className="rounded-lg border border-black/[0.08] bg-white p-3.5">
-            <div className="flex items-start gap-2">
-              <div className="flex-1">
-                <Field label="Receipt number">
-                  <TextInput
-                    value={payment.receiptNumber}
-                    onChange={(value) => updatePayment(index, "receiptNumber", value)}
-                  />
-                </Field>
-              </div>
-              <RemoveButton
-                label={`Remove payment ${index + 1}`}
-                onClick={() => setPayments(payments.filter((_, i) => i !== index))}
-              />
-            </div>
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <Field label="Date paid">
-                <TextInput type="date" value={payment.date} onChange={(value) => updatePayment(index, "date", value)} />
-              </Field>
-              <Field label="Amount">
-                <NumberInput
-                  value={payment.amount}
-                  placeholder="0.00"
-                  onChange={(value) => updatePayment(index, "amount", value)}
-                />
-              </Field>
-            </div>
-            <div className="mt-3 space-y-3">
-              <Field label="Payment method">
-                <TextInput
-                  value={payment.method}
-                  placeholder="UPI, Bank transfer (NEFT), Cheque…"
-                  onChange={(value) => updatePayment(index, "method", value)}
-                />
-              </Field>
-              <Field label="Small print under the method" hint="E.g. the UTR or transaction reference.">
-                <LinesInput
-                  rows={2}
-                  value={payment.details}
-                  placeholder="UTR 412345678901"
-                  onChange={(value) => updatePayment(index, "details", value)}
-                />
-              </Field>
-            </div>
-          </div>
-        ))}
-        <AddButton onClick={recordPayment}>Record payment</AddButton>
-        {payments.length > 0 && (
-          <Field label="Receipt footer" hint="Small print at the end of every receipt for this invoice.">
-            <TextArea
-              value={record.receiptFooter}
-              placeholder="This is a computer-generated receipt and does not require a signature."
-              onChange={set("receiptFooter")}
-            />
-          </Field>
-        )}
-      </Section>
     </div>
   );
 }

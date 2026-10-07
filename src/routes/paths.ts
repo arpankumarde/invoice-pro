@@ -5,11 +5,9 @@ import type { EditTarget } from "../app/editor/target.ts";
 export const invoiceFile = (id: string) => `invoices/${id}.json`;
 const invoiceIdOf = (file: string) => file.replace(/^invoices\//, "").replace(/\.json$/, "");
 
-/** The page for an invoice id, or a receipt id such as "INV-2026-10-0001/receipt-1". */
-export function documentPath(documentId: string) {
-  const [invoiceId, receipt] = documentId.split("/");
-  return generatePath("/invoices/:invoiceId/:receipt?", { invoiceId, receipt });
-}
+/** The page for an invoice, or for the receipt of a payment towards it (by payment id). */
+export const documentPath = (invoiceId: string, receiptId?: string) =>
+  generatePath("/invoices/:invoiceId/:receipt?", { invoiceId, receipt: receiptId });
 
 /** A customer's page: their details and every invoice billed to them. */
 export const customerPath = (id: string) => generatePath("/customers/:customerId", { customerId: id });

@@ -12,10 +12,13 @@ const PORT = Number(process.env.PORT ?? 3001);
 
 const SHARED_FILES = ["settings.json", "business.json", "customers.json", "taxes.json"];
 const INVOICE_FILE = /^invoices\/[\w-][\w.-]*\.json$/;
+const PAYMENT_FILE = /^payments\/[\w-][\w.-]*\.json$/;
 const IMAGE_TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg" };
 
+/** Invoices and payments: one file each, which can also be created and deleted. */
+const isRecord = (path: string) => INVOICE_FILE.test(path) || PAYMENT_FILE.test(path);
 /** Only these paths (relative to the data folder) can be written, so requests can't reach other files. */
-const isWritable = (path: string) => SHARED_FILES.includes(path) || INVOICE_FILE.test(path);
+const isWritable = (path: string) => SHARED_FILES.includes(path) || isRecord(path);
 
 const app = new Hono();
 
@@ -40,18 +43,23 @@ app.get("/api/data", async (c) => {
       return undefined;
     }
   };
-  const invoiceNames = (await readdir(join(DATA_DIR, "invoices")).catch(() => [] as string[]))
-    .filter((name) => INVOICE_FILE.test(`invoices/${name}`))
-    .sort();
+  // Every record in a folder, e.g. invoices/INV-2026-10-0001.json.
+  const readFolder = async (folder: string, pattern: RegExp) => {
+    const names = (await readdir(join(DATA_DIR, folder)).catch(() => [] as string[]))
+      .filter((name) => pattern.test(`${folder}/${name}`))
+      .sort();
+    return Promise.all(names.map(async (name) => ({ file: `${folder}/${name}`, data: await read(`${folder}/${name}`) })));
+  };
   const images = (await readdir(DATA_DIR).catch(() => [] as string[])).filter(
     (name) => extname(name).toLowerCase() in IMAGE_TYPES,
   );
 
   const [settings, business, customers, taxes] = await Promise.all(SHARED_FILES.map(read));
-  const invoices = await Promise.all(
-    invoiceNames.map(async (name) => ({ file: `invoices/${name}`, data: await read(`invoices/${name}`) })),
-  );
-  return c.json({ settings, business, customers, taxes, invoices, images, problems });
+  const [invoices, payments] = await Promise.all([
+    readFolder("invoices", INVOICE_FILE),
+    readFolder("payments", PAYMENT_FILE),
+  ]);
+  return c.json({ settings, business, customers, taxes, invoices, payments, images, problems });
 });
 
 app.get("/api/images/:name", async (c) => {
@@ -64,7 +72,7 @@ app.get("/api/images/:name", async (c) => {
   return c.body(await readFile(path), 200, { "Content-Type": type, "Cache-Control": "no-cache" });
 });
 
-/** Writes one JSON file. `?create` refuses to overwrite an existing file (used for new invoices). */
+/** Writes one JSON file. `?create` refuses to overwrite an existing file (used for new invoices and payments). */
 app.put("/api/data/:path{.+}", async (c) => {
   const path = c.req.param("path");
   if (!isWritable(path)) return c.json({ error: `${path} can't be written` }, 400);
@@ -85,7 +93,7 @@ app.put("/api/data/:path{.+}", async (c) => {
 
 app.delete("/api/data/:path{.+}", async (c) => {
   const path = c.req.param("path");
-  if (!INVOICE_FILE.test(path)) return c.json({ error: "Only invoice files can be deleted" }, 400);
+  if (!isRecord(path)) return c.json({ error: "Only invoice and payment files can be deleted" }, 400);
   const target = join(DATA_DIR, path);
   if (!existsSync(target)) return c.json({ error: `${path} doesn't exist` }, 404);
   await rm(target);

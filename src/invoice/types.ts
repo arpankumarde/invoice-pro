@@ -40,6 +40,8 @@ export interface DataSet {
   customers: unknown;
   taxes: unknown;
   invoices: { file: string; data: unknown }[];
+  /** One file per payment received, naming the invoices it pays and how much goes to each. */
+  payments: { file: string; data: unknown }[];
   /** File names of images present in src/data (for logo lookups). */
   images: string[];
 }
@@ -68,24 +70,26 @@ export interface TotalRow {
   strong?: boolean;
 }
 
-/** A row of a receipt's "Payment history". Empty strings leave the cell blank. */
-export interface PaymentRow {
-  method: string;
-  /** Small print under the method, e.g. a UTR or transaction reference. */
-  details: string[];
-  date: string;
+/** A row of a receipt: what the payment put towards one of the invoices it pays. */
+export interface AllocationRow {
+  invoice: string;
+  issueDate: string;
+  total: string;
+  /** Paid on this invoice by earlier payments. */
+  paidBefore: string;
   amount: string;
-  receiptNumber: string;
+  /** Still owed on this invoice after this payment. */
+  balance: string;
 }
 
 /** Everything the PDF renderer needs for an invoice or one of its receipts, already validated and formatted. */
 export interface ResolvedDocument {
   kind: "invoice" | "receipt";
-  /** Unique across the folder: the invoice file's name, plus "/receipt-<n>" for its receipts. */
+  /** The invoice or payment file's name, without folder or extension. */
   id: string;
-  /** The invoice file, also for receipts. */
+  /** The invoice or payment file. */
   file: string;
-  /** Receipts take their invoice's status. */
+  /** Receipts take their invoices' status: draft while any of them is. */
   status: InvoiceStatus;
   /** Invoice number, or receipt number on a receipt. */
   number?: string;
@@ -105,18 +109,30 @@ export interface ResolvedDocument {
   hasTaxColumn: boolean;
   items: LineItem[];
   totals: TotalRow[];
-  /** Receipts: the payments made so far, this receipt's last. Empty on invoices. */
-  payments: PaymentRow[];
+  /** Receipts: one row per invoice the payment pays, drawn instead of the line items. Empty on invoices. */
+  allocations: AllocationRow[];
   footnotes: string[];
   footer?: string;
 }
 
 export type PaymentStatus = "unpaid" | "partial" | "paid";
 
+export interface ResolvedReceipt extends ResolvedDocument {
+  kind: "receipt";
+  summary: {
+    amount: string;
+    date?: string;
+    /** ISO date, for sorting. */
+    sortKey: string;
+    /** Ids of the invoices it pays, in the payment's order. */
+    invoices: string[];
+  };
+}
+
 export interface ResolvedInvoice extends ResolvedDocument {
   kind: "invoice";
-  /** One per payment, in the order they were made. */
-  receipts: ResolvedDocument[];
+  /** One per payment towards this invoice, in the order they were made. */
+  receipts: ResolvedReceipt[];
   summary: {
     customer?: string;
     amountDue: string;
@@ -145,3 +161,17 @@ export type InvoiceEntry =
       status?: InvoiceStatus;
       number?: string;
     };
+
+/**
+ * A payment file. `invoiceIds` and `customerId` are read from the raw JSON, so they are known even
+ * when the payment has errors; the customer is that of its first invoice.
+ */
+export type PaymentEntry = { id: string; file: string; invoiceIds: string[]; customerId?: string } & (
+  | { ok: true; receipt: ResolvedReceipt }
+  | { ok: false; errors: string[]; receiptNumber?: string }
+);
+
+export interface Resolved {
+  invoices: InvoiceEntry[];
+  payments: PaymentEntry[];
+}

@@ -1,10 +1,11 @@
 import { useSyncExternalStore } from "react";
 import { resolveAll } from "../invoice/resolve.ts";
-import type { DataSet, InvoiceEntry } from "../invoice/types.ts";
+import type { DataSet, InvoiceEntry, PaymentEntry } from "../invoice/types.ts";
 import { API_BASE, imageUrl } from "./api.ts";
 
 export interface Snapshot {
   entries: InvoiceEntry[];
+  payments: PaymentEntry[];
   /** The JSON exactly as stored on the server, for the editor. */
   raw: DataSet;
   /** Image file name in the data folder → URL served by the data server. */
@@ -42,12 +43,15 @@ export async function refresh() {
       customers: data.customers,
       taxes: data.taxes,
       invoices: data.invoices ?? [],
+      payments: data.payments ?? [],
       images: data.images ?? [],
     };
+    const resolved = resolveAll(raw);
     setState({
       status: "ready",
       snapshot: {
-        entries: resolveAll(raw),
+        entries: resolved.invoices,
+        payments: resolved.payments,
         raw,
         images: Object.fromEntries(raw.images.map((name) => [name, imageUrl(name)])),
         problems: data.problems ?? [],

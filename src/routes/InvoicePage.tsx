@@ -2,8 +2,8 @@ import { useState } from "react";
 import { Link, Navigate, useNavigate, useOutletContext, useParams } from "react-router";
 import { DATA_FOLDER, saveFile } from "../app/api.ts";
 import { refresh, type Snapshot } from "../app/data.ts";
-import { asList, asObj, isObj, tidy } from "../app/editor/json.ts";
-import { entryStatus, entryTitle } from "../app/entries.ts";
+import { asObj, isObj, tidy } from "../app/editor/json.ts";
+import { entryStatus, entryTitle, paymentTitle } from "../app/entries.ts";
 import { downloadPdf } from "../app/generate.ts";
 import { PdfPreview } from "../app/PdfPreview.tsx";
 import {
@@ -24,7 +24,7 @@ import { usePdf } from "../app/usePdf.ts";
 import type { InvoiceEntry, InvoiceStatus } from "../invoice/types.ts";
 import type { Workspace } from "./Layout.tsx";
 import { customerPath, documentPath, editPath } from "./paths.ts";
-import { PaymentsDialog } from "./PaymentsDialog.tsx";
+import { PaymentDialog } from "./PaymentDialog.tsx";
 
 /** "/" and "/invoices/:invoiceId/:receipt?": an invoice, or one of its receipts, as the finished PDF. */
 export function InvoicePage() {
@@ -53,9 +53,12 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
   const navigate = useNavigate();
   const invoice = entry.ok ? entry.invoice : undefined;
   // The invoice itself, or the receipt named in the URL.
-  const doc = invoice?.receipts.find((candidate) => candidate.id === `${entry.id}/${receipt}`) ?? invoice;
+  const doc = invoice?.receipts.find((candidate) => candidate.id === receipt) ?? invoice;
   const pdf = usePdf(doc, snapshot.images);
-  const [managingPayments, setManagingPayments] = useState(false);
+  // The payment dialog: a new payment, or the payment file being edited.
+  const [paymentDialog, setPaymentDialog] = useState<{ file?: string }>();
+  // Payments towards this invoice that have problems, so they can be opened and fixed.
+  const brokenPayments = snapshot.payments.filter((payment) => !payment.ok && payment.invoiceIds.includes(entry.id));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
 
@@ -63,7 +66,6 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
   // errors too, as long as the file holds a JSON object.
   const record = snapshot.raw.invoices.find((inv) => inv.file === entry.file)?.data;
   const status = entryStatus(entry);
-  const paymentCount = asList(asObj(record).payments).length;
   const setStatus = async (next: InvoiceStatus) => {
     if (next === status || saving) return;
     setSaving(true);
@@ -108,18 +110,23 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
           </div>
           <div className="flex flex-wrap gap-2">
             <StatusToggle status={status} disabled={saving || !isObj(record)} onChange={(next) => void setStatus(next)} />
-            <button
-              type="button"
-              disabled={!isObj(record)}
-              onClick={() => setManagingPayments(true)}
-              className={secondaryButton}
-            >
-              <ReceiptIcon />
-              {paymentCount === 0 ? "Record payment" : "Payments"}
-              {paymentCount > 0 && (
-                <span className="rounded bg-black/[0.06] px-1.5 text-[11px] tabular-nums text-muted">{paymentCount}</span>
-              )}
-            </button>
+            {doc?.kind === "receipt" ? (
+              <button type="button" onClick={() => setPaymentDialog({ file: doc.file })} className={secondaryButton}>
+                <PencilIcon className="shrink-0" />
+                Edit payment
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={!isObj(record) || invoice?.summary.payment === "paid"}
+                title={invoice?.summary.payment === "paid" ? "Paid in full" : undefined}
+                onClick={() => setPaymentDialog({})}
+                className={secondaryButton}
+              >
+                <ReceiptIcon />
+                Record payment
+              </button>
+            )}
             <Link to={editPath({ kind: "invoice", file: entry.file })} className={secondaryButton}>
               <PencilIcon className="shrink-0" />
               Edit
@@ -137,19 +144,16 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
         </div>
       </header>
 
-      {managingPayments && (
-        <PaymentsDialog
+      {paymentDialog && (
+        <PaymentDialog
           snapshot={snapshot}
-          file={entry.file}
-          title={entryTitle(entry)}
-          invoice={invoice}
-          // Opens on the receipt being viewed.
-          initialIndex={doc?.kind === "receipt" ? invoice?.receipts.indexOf(doc) : undefined}
-          onClose={() => setManagingPayments(false)}
-          // Show the receipt of the payment that was selected, or the invoice when none was.
-          onSaved={(index) => {
-            setManagingPayments(false);
-            void navigate(documentPath(index === undefined ? entry.id : `${entry.id}/receipt-${index + 1}`));
+          file={paymentDialog.file}
+          invoiceId={entry.id}
+          onClose={() => setPaymentDialog(undefined)}
+          // Show the payment's receipt, or the invoice once the payment is deleted.
+          onSaved={(paymentId) => {
+            setPaymentDialog(undefined);
+            void navigate(documentPath(entry.id, paymentId));
           }}
         />
       )}
@@ -159,6 +163,25 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
           <p className="mb-6 rounded-lg bg-red-50 p-4 text-sm text-red-800" role="alert">
             Could not change the status: {saveError}
           </p>
+        )}
+        {brokenPayments.length > 0 && (
+          <div className="mb-6 flex flex-wrap items-center gap-2 rounded-lg bg-red-50 p-4 text-sm text-red-800" role="alert">
+            <span className="mr-auto">
+              {brokenPayments.length === 1 ? "A payment" : `${brokenPayments.length} payments`} towards this invoice
+              {brokenPayments.length === 1 ? " has" : " have"} problems.
+            </span>
+            {brokenPayments.map((payment) => (
+              <button
+                key={payment.file}
+                type="button"
+                onClick={() => setPaymentDialog({ file: payment.file })}
+                className={secondaryButton}
+              >
+                <PencilIcon className="shrink-0" />
+                Fix {paymentTitle(payment)}
+              </button>
+            ))}
+          </div>
         )}
         {!entry.ok && (
           <Errors
@@ -175,7 +198,11 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
           <p className="mb-6 rounded-lg bg-red-50 p-4 text-sm text-red-800">Could not build the PDF: {pdf.error}</p>
         )}
         {invoice && doc && (
-          <DocumentTabs invoice={invoice} selectedId={doc.id} onSelect={(id) => void navigate(documentPath(id))} />
+          <DocumentTabs
+            invoice={invoice}
+            selectedId={doc.id}
+            onSelect={(id) => void navigate(documentPath(entry.id, id === invoice.id ? undefined : id))}
+          />
         )}
         {doc &&
           (pdf.previewBytes ? (

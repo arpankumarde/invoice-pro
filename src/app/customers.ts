@@ -1,5 +1,5 @@
 import { createFormatters } from "../invoice/format.ts";
-import type { InvoiceEntry } from "../invoice/types.ts";
+import type { InvoiceEntry, PaymentEntry } from "../invoice/types.ts";
 import type { Snapshot } from "./data.ts";
 import { asList, asObj, text } from "./editor/json.ts";
 import { entryStatus } from "./entries.ts";
@@ -22,8 +22,12 @@ export interface CustomerSummary {
   defined: boolean;
   /** The customer's invoices, latest first. */
   entries: InvoiceEntry[];
+  /** Payments towards the customer's invoices, latest first. */
+  payments: PaymentEntry[];
   balances: Balance[];
 }
+
+const paymentSortKey = (payment: PaymentEntry) => (payment.ok ? payment.receipt.summary.sortKey : `0000 ${payment.id}`);
 
 /** Every customer in customers.json, then any id that only invoices mention, each with its invoices. */
 export function customerSummaries(snapshot: Snapshot, entries: InvoiceEntry[]): CustomerSummary[] {
@@ -35,7 +39,10 @@ export function customerSummaries(snapshot: Snapshot, entries: InvoiceEntry[]): 
   return ids.map((id) => {
     const name = text(asObj(defined[id]).name) || undefined;
     const own = entries.filter((entry) => entry.customerId === id);
-    return { id, name, defined: id in defined, entries: own, balances: balancesOf(own) };
+    const payments = snapshot.payments
+      .filter((payment) => payment.customerId === id)
+      .sort((a, b) => paymentSortKey(b).localeCompare(paymentSortKey(a)));
+    return { id, name, defined: id in defined, entries: own, payments, balances: balancesOf(own) };
   });
 }
 

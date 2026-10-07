@@ -1,12 +1,23 @@
-import type { ReactNode } from "react";
-import { Link, Navigate, useOutletContext, useParams } from "react-router";
+import { type ReactNode, useState } from "react";
+import { Link, Navigate, useNavigate, useOutletContext, useParams } from "react-router";
 import { DATA_FOLDER } from "../app/api.ts";
-import type { Snapshot } from "../app/data.ts";
+import { latestSnapshot, type Snapshot } from "../app/data.ts";
 import { customerDetails, type CustomerSummary, customerSummaries } from "../app/customers.ts";
-import { entryStatus, entryTitle } from "../app/entries.ts";
-import { Code, PaymentBadge, PencilIcon, PlusIcon, primaryButton, secondaryButton, StatusBadge } from "../app/ui.tsx";
+import { entryStatus, entryTitle, paymentTitle } from "../app/entries.ts";
+import {
+  Code,
+  PaymentBadge,
+  PencilIcon,
+  PlusIcon,
+  primaryButton,
+  ReceiptIcon,
+  secondaryButton,
+  StatusBadge,
+} from "../app/ui.tsx";
+import type { InvoiceEntry } from "../invoice/types.ts";
 import type { Workspace } from "./Layout.tsx";
 import { customerPath, documentPath, editPath } from "./paths.ts";
+import { PaymentDialog } from "./PaymentDialog.tsx";
 
 /** "/customers/:customerId?": a customer's details and every invoice billed to them. */
 export function CustomerPage() {
@@ -14,7 +25,7 @@ export function CustomerPage() {
   const { customerId } = useParams();
   const customers = customerSummaries(snapshot, entries);
   const customer = customers.find((candidate) => candidate.id === customerId);
-  if (customer) return <CustomerView snapshot={snapshot} customer={customer} />;
+  if (customer) return <CustomerView snapshot={snapshot} entries={entries} customer={customer} />;
   // "/customers" and customers that no longer exist land on the first one.
   if (customers[0]) return <Navigate to={customerPath(customers[0].id)} replace />;
 
@@ -30,9 +41,24 @@ export function CustomerPage() {
   );
 }
 
-function CustomerView({ snapshot, customer }: { snapshot: Snapshot; customer: CustomerSummary }) {
+function CustomerView({
+  snapshot,
+  entries,
+  customer,
+}: {
+  snapshot: Snapshot;
+  entries: InvoiceEntry[];
+  customer: CustomerSummary;
+}) {
+  const navigate = useNavigate();
   const details = customerDetails(snapshot, customer.id);
   const drafts = customer.entries.filter((entry) => entryStatus(entry) === "draft").length;
+  // The payment dialog: a new payment, or the payment file being edited.
+  const [paymentDialog, setPaymentDialog] = useState<{ file?: string }>();
+  const invoiceTitle = (id: string) => {
+    const entry = entries.find((candidate) => candidate.id === id);
+    return entry ? entryTitle(entry) : id;
+  };
 
   return (
     <>
@@ -44,14 +70,40 @@ function CustomerView({ snapshot, customer }: { snapshot: Snapshot; customer: Cu
               {customer.id} · {plural(customer.entries.length, "invoice")}
             </p>
           </div>
-          {customer.defined && (
-            <Link to={editPath({ kind: "customer", id: customer.id })} className={secondaryButton}>
-              <PencilIcon className="shrink-0" />
-              Edit customer
-            </Link>
-          )}
+          <div className="flex flex-wrap gap-2">
+            {customer.defined && (
+              <Link to={editPath({ kind: "customer", id: customer.id })} className={secondaryButton}>
+                <PencilIcon className="shrink-0" />
+                Edit customer
+              </Link>
+            )}
+            <button
+              type="button"
+              disabled={customer.entries.length === 0}
+              onClick={() => setPaymentDialog({})}
+              className={primaryButton}
+            >
+              <ReceiptIcon />
+              Record payment
+            </button>
+          </div>
         </div>
       </header>
+
+      {paymentDialog && (
+        <PaymentDialog
+          snapshot={snapshot}
+          file={paymentDialog.file}
+          customerId={customer.id}
+          onClose={() => setPaymentDialog(undefined)}
+          // Show the new receipt, on the first invoice the payment went to.
+          onSaved={(paymentId) => {
+            setPaymentDialog(undefined);
+            const saved = latestSnapshot()?.payments.find((payment) => payment.id === paymentId);
+            if (saved?.ok) void navigate(documentPath(saved.invoiceIds[0], saved.id));
+          }}
+        />
+      )}
 
       <div className="mx-auto max-w-[880px] space-y-6 px-4 py-6 sm:px-8">
         {!customer.defined && (
@@ -124,6 +176,64 @@ function CustomerView({ snapshot, customer }: { snapshot: Snapshot; customer: Cu
             </table>
           )}
         </section>
+
+        {customer.payments.length > 0 && (
+          <section>
+            <h3 className="mb-2 text-[13px] font-semibold">Payments</h3>
+            <div className="overflow-hidden rounded-lg border border-line bg-white">
+              <table className="w-full text-left text-[13px]">
+                <thead className="border-b border-line text-[11px] font-medium tracking-wide text-muted uppercase">
+                  <tr>
+                    <th className="px-4 py-2.5 font-medium">Receipt</th>
+                    <th className="px-4 py-2.5 font-medium max-sm:hidden">Paid</th>
+                    <th className="px-4 py-2.5 font-medium">Invoices</th>
+                    <th className="px-4 py-2.5 text-right font-medium">Amount</th>
+                    <th className="w-0 px-2 py-2.5">
+                      <span className="sr-only">Edit</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {customer.payments.map((payment) => {
+                    const to = payment.ok ? documentPath(payment.invoiceIds[0], payment.id) : undefined;
+                    // Valid payments link to their receipt; only the first cell takes keyboard focus.
+                    const cell = (children: ReactNode, focusable = false) =>
+                      to ? (
+                        <Link to={to} className="block px-4 py-3" tabIndex={focusable ? undefined : -1}>
+                          {children}
+                        </Link>
+                      ) : (
+                        <div className="px-4 py-3">{children}</div>
+                      );
+                    return (
+                      <tr key={payment.file} className="hover:bg-canvas/60">
+                        <td className="p-0 font-medium">{cell(paymentTitle(payment), true)}</td>
+                        <td className="p-0 text-muted max-sm:hidden">
+                          {cell((payment.ok && payment.receipt.summary.date) || "—")}
+                        </td>
+                        <td className="p-0 text-muted">{cell(payment.invoiceIds.map(invoiceTitle).join(", ") || "—")}</td>
+                        <td className="p-0 text-right tabular-nums">
+                          {cell(payment.ok ? payment.receipt.summary.amount : <span className="text-red-700">Needs fixing</span>)}
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setPaymentDialog({ file: payment.file })}
+                            aria-label={`Edit payment ${paymentTitle(payment)}`}
+                            title="Edit payment"
+                            className="grid size-8 place-items-center rounded-md text-muted hover:bg-black/[0.04] hover:text-ink"
+                          >
+                            <PencilIcon className="shrink-0" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
 
         {customer.defined && (
           <section className="grid gap-x-8 gap-y-4 rounded-lg border border-line bg-white p-5 text-[13px] sm:grid-cols-2">

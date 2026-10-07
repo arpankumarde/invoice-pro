@@ -304,31 +304,78 @@ export function renderPdf(invoice: ResolvedDocument, assets: RenderAssets): Prom
     return baseline + 7.5 + RULE + 13.5;
   };
 
-  let next = drawTableHeader(y + 39.75);
-  let rowEnd = next;
-  for (const item of items) {
-    const lines = [item.description, ...item.details]
-      .filter(Boolean)
-      .flatMap((text) => wrap(text, descriptionWidth));
-    if (lines.length === 0) lines.push("");
-    let top = next;
-    if (top + (lines.length - 1) * LINE > bottom) {
-      addPage();
-      top = drawTableHeader(CONTINUED_TOP);
+  // A receipt: one row per invoice the payment went towards instead of the line items, invoice and
+  // date from the left, the amounts sized to their content from the right.
+  const drawAllocations = (top: number) => {
+    const rows = invoice.allocations;
+    const fit = (label: string, values: string[]) => snap(Math.max(measure(label, SMALL), ...values.map((v) => measure(v))));
+    const columns = [
+      { label: "Invoice total", values: rows.map((row) => row.total) },
+      { label: "Paid earlier", values: rows.map((row) => row.paidBefore) },
+      { label: "Amount paid", values: rows.map((row) => row.amount) },
+      { label: "Balance", values: rows.map((row) => row.balance) },
+    ];
+    const rights: number[] = [];
+    let edge = right;
+    for (const column of [...columns].reverse()) {
+      rights.unshift(edge);
+      edge -= fit(column.label, column.values) + COLUMN_GAP;
     }
-    lines.forEach((line, i) => write(line, MARGIN, top + i * LINE));
-    if (item.quantity) write(item.quantity, qtyRight, top, {}, "right");
-    write(item.unitPrice, unitRight, top, {}, "right");
-    if (hasTaxColumn && item.tax) {
-      const note = marker(item.taxNotes);
-      const noteWidth = note ? measure(note, MARKER) : 0;
-      write(item.tax, taxRight - noteWidth, top, {}, "right");
-      if (note) write(note, taxRight - noteWidth, top - 5.25, MARKER);
+    const dateX = MARGIN + fit("Invoice", rows.map((row) => row.invoice)) + COLUMN_GAP;
+    const drawHeader = (baseline: number) => {
+      write("Invoice", MARGIN, baseline, SMALL);
+      write("Date of issue", dateX, baseline, SMALL);
+      columns.forEach((column, i) => write(column.label, rights[i], baseline, SMALL, "right"));
+      hrule(MARGIN, baseline + 7.5, width, BLACK);
+      return baseline + 7.5 + RULE + 13.5;
+    };
+    let next = drawHeader(top);
+    let end = next;
+    for (const row of rows) {
+      let baseline = next;
+      if (baseline > bottom) {
+        addPage();
+        baseline = drawHeader(CONTINUED_TOP);
+      }
+      write(row.invoice, MARGIN, baseline, { weight: "medium" });
+      write(row.issueDate, dateX, baseline);
+      [row.total, row.paidBefore, row.amount, row.balance].forEach((value, i) => write(value, rights[i], baseline, {}, "right"));
+      end = baseline;
+      next = baseline + LINE + ITEM_GAP;
     }
-    write(item.amount, right, top, {}, "right");
-    rowEnd = top + (lines.length - 1) * LINE;
-    next = rowEnd + LINE + ITEM_GAP;
-  }
+    return end;
+  };
+
+  const drawItems = (headerBaseline: number) => {
+    let next = drawTableHeader(headerBaseline);
+    let rowEnd = next;
+    for (const item of items) {
+      const lines = [item.description, ...item.details]
+        .filter(Boolean)
+        .flatMap((text) => wrap(text, descriptionWidth));
+      if (lines.length === 0) lines.push("");
+      let top = next;
+      if (top + (lines.length - 1) * LINE > bottom) {
+        addPage();
+        top = drawTableHeader(CONTINUED_TOP);
+      }
+      lines.forEach((line, i) => write(line, MARGIN, top + i * LINE));
+      if (item.quantity) write(item.quantity, qtyRight, top, {}, "right");
+      write(item.unitPrice, unitRight, top, {}, "right");
+      if (hasTaxColumn && item.tax) {
+        const note = marker(item.taxNotes);
+        const noteWidth = note ? measure(note, MARKER) : 0;
+        write(item.tax, taxRight - noteWidth, top, {}, "right");
+        if (note) write(note, taxRight - noteWidth, top - 5.25, MARKER);
+      }
+      write(item.amount, right, top, {}, "right");
+      rowEnd = top + (lines.length - 1) * LINE;
+      next = rowEnd + LINE + ITEM_GAP;
+    }
+    return rowEnd;
+  };
+
+  const rowEnd = invoice.allocations.length > 0 ? drawAllocations(y + 39.75) : drawItems(y + 39.75);
 
   /* ---------- totals ---------- */
 
@@ -346,70 +393,6 @@ export function renderPdf(invoice: ResolvedDocument, assets: RenderAssets): Prom
     ruleY += 14.25;
   }
   y = ruleY - 14.25 + 10.5;
-
-  /* ---------- payment history (receipts) ---------- */
-
-  // A small table like the line items: amounts and receipt numbers sized to their content from
-  // the right, dates lined up with the totals when there is room, the method taking the rest.
-  if (invoice.payments.length > 0) {
-    const { payments } = invoice;
-    const DETAILS_GAP = 11.25; // method baseline to its first line of small print
-    const hasDate = payments.some((row) => row.date);
-    const hasReceipt = payments.some((row) => row.receiptNumber);
-    const receiptWidth = hasReceipt
-      ? snap(Math.max(measure("Receipt number", SMALL), ...payments.map((row) => measure(row.receiptNumber))))
-      : 0;
-    const paidRight = hasReceipt ? right - receiptWidth - COLUMN_GAP : right;
-    const paidLeft =
-      paidRight - snap(Math.max(measure("Amount paid", SMALL), ...payments.map((row) => measure(row.amount))));
-    const dateWidth = hasDate ? snap(Math.max(measure("Date", SMALL), ...payments.map((row) => measure(row.date)))) : 0;
-    const dateX = Math.min(totalsX, paidLeft - COLUMN_GAP - dateWidth);
-    const methodWidth = (hasDate ? dateX : paidLeft) - COLUMN_GAP - MARGIN;
-
-    const rows = payments.map((row) => {
-      const method = wrap(row.method, methodWidth);
-      const details = row.details.flatMap((text) => wrap(text, methodWidth, SMALL));
-      const methodDepth = (method.length - 1) * LINE;
-      const depth = details.length > 0 ? methodDepth + DETAILS_GAP + (details.length - 1) * SMALL_LINE : methodDepth;
-      return { ...row, method, details, methodDepth, depth };
-    });
-
-    const drawHeader = (baseline: number) => {
-      write("Payment method", MARGIN, baseline, SMALL);
-      if (hasDate) write("Date", dateX, baseline, SMALL);
-      write("Amount paid", paidRight, baseline, SMALL, "right");
-      if (hasReceipt) write("Receipt number", right, baseline, SMALL, "right");
-      hrule(MARGIN, baseline + 7.5, width, BLACK);
-      return baseline + 7.5 + RULE + 13.5;
-    };
-
-    // The heading stays with the header and first row.
-    let title = y + 39.75;
-    if (title + 36 + 21.75 + rows[0].depth > bottom) {
-      addPage();
-      title = CONTINUED_TOP;
-    }
-    write("Payment history", MARGIN, title, { weight: "semibold", size: 13.5 });
-    let next = drawHeader(title + 36);
-    let rowEnd = next;
-    for (const row of rows) {
-      let top = next;
-      if (top + row.depth > bottom) {
-        addPage();
-        top = drawHeader(CONTINUED_TOP);
-      }
-      row.method.forEach((line, i) => write(line, MARGIN, top + i * LINE));
-      row.details.forEach((line, i) =>
-        write(line, MARGIN, top + row.methodDepth + DETAILS_GAP + i * SMALL_LINE, SMALL),
-      );
-      if (row.date) write(row.date, dateX, top);
-      write(row.amount, paidRight, top, {}, "right");
-      if (row.receiptNumber) write(row.receiptNumber, right, top, {}, "right");
-      rowEnd = top + row.depth;
-      next = rowEnd + LINE + ITEM_GAP;
-    }
-    y = rowEnd;
-  }
 
   /* ---------- bank transfer details ---------- */
 
