@@ -5,7 +5,7 @@ import type { EditTarget } from "../app/editor/target.ts";
 import { entryStatus, entryTitle, joinParts } from "../app/entries.ts";
 import { PaymentBadge, PlusIcon } from "../app/ui.tsx";
 import type { Workspace } from "./Layout.tsx";
-import { customerPath, documentPath, editPath } from "./paths.ts";
+import { customerPath, editPath, invoicePath } from "./paths.ts";
 
 const TAB_LABELS = { invoices: "Invoices", customers: "Customers", editor: "Editor" };
 
@@ -108,7 +108,7 @@ function InvoiceNav({ entries }: Pick<Workspace, "entries">) {
             {group.map((entry) => (
               <NavItem
                 key={entry.id}
-                to={documentPath(entry.id)}
+                to={invoicePath(entry.id)}
                 title={entryTitle(entry)}
                 aside={entry.ok && entry.invoice.summary.amountDue}
                 badge={entry.ok && <PaymentBadge payment={entry.invoice.summary.payment} />}

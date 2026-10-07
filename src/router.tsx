@@ -3,6 +3,7 @@ import { CustomerPage } from "./routes/CustomerPage.tsx";
 import { EditorPage } from "./routes/EditorPage.tsx";
 import { InvoicePage } from "./routes/InvoicePage.tsx";
 import { Layout } from "./routes/Layout.tsx";
+import { ReceiptPage } from "./routes/ReceiptPage.tsx";
 import { editPath } from "./routes/paths.ts";
 
 /** Every URL in the app. Links are built with the helpers in routes/paths.ts. */
@@ -13,7 +14,9 @@ export const router = createBrowserRouter([
     children: [
       // The Invoices tab. "/" lands on the latest invoice.
       { index: true, Component: InvoicePage },
-      { path: "invoices/:invoiceId/:receipt?", Component: InvoicePage },
+      { path: "invoices/:invoiceId", Component: InvoicePage },
+      // A payment's receipt, which may cover several invoices.
+      { path: "receipts/:receiptId", Component: ReceiptPage },
 
       // The Customers tab. "/customers" lands on the first customer.
       { path: "customers/:customerId?", Component: CustomerPage },

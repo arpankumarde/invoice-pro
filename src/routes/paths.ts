@@ -5,9 +5,11 @@ import type { EditTarget } from "../app/editor/target.ts";
 export const invoiceFile = (id: string) => `invoices/${id}.json`;
 const invoiceIdOf = (file: string) => file.replace(/^invoices\//, "").replace(/\.json$/, "");
 
-/** The page for an invoice, or for the receipt of a payment towards it (by payment id). */
-export const documentPath = (invoiceId: string, receiptId?: string) =>
-  generatePath("/invoices/:invoiceId/:receipt?", { invoiceId, receipt: receiptId });
+/** The page for an invoice. */
+export const invoicePath = (invoiceId: string) => generatePath("/invoices/:invoiceId", { invoiceId });
+
+/** The page for a payment's receipt; the id is the payment file's name without .json. */
+export const receiptPath = (receiptId: string) => generatePath("/receipts/:receiptId", { receiptId });
 
 /** A customer's page: their details and every invoice billed to them. */
 export const customerPath = (id: string) => generatePath("/customers/:customerId", { customerId: id });

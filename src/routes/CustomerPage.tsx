@@ -1,7 +1,7 @@
 import { type ReactNode, useState } from "react";
 import { Link, Navigate, useNavigate, useOutletContext, useParams } from "react-router";
 import { DATA_FOLDER } from "../app/api.ts";
-import { latestSnapshot, type Snapshot } from "../app/data.ts";
+import type { Snapshot } from "../app/data.ts";
 import { customerDetails, type CustomerSummary, customerSummaries } from "../app/customers.ts";
 import { entryStatus, entryTitle, paymentTitle } from "../app/entries.ts";
 import {
@@ -16,7 +16,7 @@ import {
 } from "../app/ui.tsx";
 import type { InvoiceEntry } from "../invoice/types.ts";
 import type { Workspace } from "./Layout.tsx";
-import { customerPath, documentPath, editPath } from "./paths.ts";
+import { customerPath, editPath, invoicePath, receiptPath } from "./paths.ts";
 import { PaymentDialog } from "./PaymentDialog.tsx";
 
 /** "/customers/:customerId?": a customer's details and every invoice billed to them. */
@@ -96,11 +96,10 @@ function CustomerView({
           file={paymentDialog.file}
           customerId={customer.id}
           onClose={() => setPaymentDialog(undefined)}
-          // Show the new receipt, on the first invoice the payment went to.
+          // Show the new receipt; after a delete, stay on the customer.
           onSaved={(paymentId) => {
             setPaymentDialog(undefined);
-            const saved = latestSnapshot()?.payments.find((payment) => payment.id === paymentId);
-            if (saved?.ok) void navigate(documentPath(saved.invoiceIds[0], saved.id));
+            if (paymentId) void navigate(receiptPath(paymentId));
           }}
         />
       )}
@@ -145,7 +144,7 @@ function CustomerView({
               </thead>
               <tbody className="divide-y divide-line">
                 {customer.entries.map((entry) => {
-                  const to = documentPath(entry.id);
+                  const to = invoicePath(entry.id);
                   return (
                     <tr key={entry.id} className="hover:bg-canvas/60">
                       <td className="p-0">
@@ -195,7 +194,7 @@ function CustomerView({
                 </thead>
                 <tbody className="divide-y divide-line">
                   {customer.payments.map((payment) => {
-                    const to = payment.ok ? documentPath(payment.invoiceIds[0], payment.id) : undefined;
+                    const to = payment.ok ? receiptPath(payment.id) : undefined;
                     // Valid payments link to their receipt; only the first cell takes keyboard focus.
                     const cell = (children: ReactNode, focusable = false) =>
                       to ? (

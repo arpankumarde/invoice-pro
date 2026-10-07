@@ -8,7 +8,6 @@ import { downloadPdf } from "../app/generate.ts";
 import { PdfPreview } from "../app/PdfPreview.tsx";
 import {
   Code,
-  DocumentTabs,
   DownloadIcon,
   Errors,
   PageSkeleton,
@@ -23,17 +22,17 @@ import {
 import { usePdf } from "../app/usePdf.ts";
 import type { InvoiceEntry, InvoiceStatus } from "../invoice/types.ts";
 import type { Workspace } from "./Layout.tsx";
-import { customerPath, documentPath, editPath } from "./paths.ts";
+import { customerPath, editPath, invoicePath, receiptPath } from "./paths.ts";
 import { PaymentDialog } from "./PaymentDialog.tsx";
 
-/** "/" and "/invoices/:invoiceId/:receipt?": an invoice, or one of its receipts, as the finished PDF. */
+/** "/" and "/invoices/:invoiceId": an invoice as the finished PDF, with links to its receipts. */
 export function InvoicePage() {
   const { snapshot, entries } = useOutletContext<Workspace>();
-  const { invoiceId, receipt } = useParams();
+  const { invoiceId } = useParams();
   const entry = entries.find((entry) => entry.id === invoiceId);
-  if (entry) return <InvoiceView snapshot={snapshot} entry={entry} receipt={receipt} />;
+  if (entry) return <InvoiceView snapshot={snapshot} entry={entry} />;
   // "/" and invoices that no longer exist land on the latest one.
-  if (entries[0]) return <Navigate to={documentPath(entries[0].id)} replace />;
+  if (entries[0]) return <Navigate to={invoicePath(entries[0].id)} replace />;
 
   return (
     <div className="mx-auto max-w-md px-6 py-24 text-center">
@@ -49,13 +48,11 @@ export function InvoicePage() {
   );
 }
 
-function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: InvoiceEntry; receipt?: string }) {
+function InvoiceView({ snapshot, entry }: { snapshot: Snapshot; entry: InvoiceEntry }) {
   const navigate = useNavigate();
   const invoice = entry.ok ? entry.invoice : undefined;
-  // The invoice itself, or the receipt named in the URL.
-  const doc = invoice?.receipts.find((candidate) => candidate.id === receipt) ?? invoice;
-  const pdf = usePdf(doc, snapshot.images);
-  // The payment dialog: a new payment, or the payment file being edited.
+  const pdf = usePdf(invoice, snapshot.images);
+  // The payment dialog: a new payment, or the payment file being fixed.
   const [paymentDialog, setPaymentDialog] = useState<{ file?: string }>();
   // Payments towards this invoice that have problems, so they can be opened and fixed.
   const brokenPayments = snapshot.payments.filter((payment) => !payment.ok && payment.invoiceIds.includes(entry.id));
@@ -91,7 +88,7 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
               {invoice && <PaymentBadge payment={invoice.summary.payment} />}
             </div>
             <p className="mt-0.5 truncate text-[13px] text-muted">
-              {invoice && doc ? (
+              {invoice ? (
                 <>
                   {entry.customerId && invoice.summary.customer ? (
                     <Link to={customerPath(entry.customerId)} className="hover:text-ink hover:underline">
@@ -101,7 +98,7 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
                     invoice.summary.customer
                   )}
                   {invoice.summary.customer && " · "}
-                  {doc.headline}
+                  {invoice.headline}
                 </>
               ) : (
                 entry.file
@@ -110,23 +107,16 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
           </div>
           <div className="flex flex-wrap gap-2">
             <StatusToggle status={status} disabled={saving || !isObj(record)} onChange={(next) => void setStatus(next)} />
-            {doc?.kind === "receipt" ? (
-              <button type="button" onClick={() => setPaymentDialog({ file: doc.file })} className={secondaryButton}>
-                <PencilIcon className="shrink-0" />
-                Edit payment
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={!isObj(record) || invoice?.summary.payment === "paid"}
-                title={invoice?.summary.payment === "paid" ? "Paid in full" : undefined}
-                onClick={() => setPaymentDialog({})}
-                className={secondaryButton}
-              >
-                <ReceiptIcon />
-                Record payment
-              </button>
-            )}
+            <button
+              type="button"
+              disabled={!isObj(record) || invoice?.summary.payment === "paid"}
+              title={invoice?.summary.payment === "paid" ? "Paid in full" : undefined}
+              onClick={() => setPaymentDialog({})}
+              className={secondaryButton}
+            >
+              <ReceiptIcon />
+              Record payment
+            </button>
             <Link to={editPath({ kind: "invoice", file: entry.file })} className={secondaryButton}>
               <PencilIcon className="shrink-0" />
               Edit
@@ -134,11 +124,11 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
             <button
               type="button"
               disabled={!pdf.bytes}
-              onClick={() => doc && pdf.bytes && downloadPdf(pdf.bytes, doc.fileName)}
+              onClick={() => invoice && pdf.bytes && downloadPdf(pdf.bytes, invoice.fileName)}
               className={primaryButton}
             >
               <DownloadIcon />
-              {doc?.status === "draft" ? "Download draft" : "Download PDF"}
+              {invoice?.status === "draft" ? "Download draft" : "Download PDF"}
             </button>
           </div>
         </div>
@@ -150,10 +140,10 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
           file={paymentDialog.file}
           invoiceId={entry.id}
           onClose={() => setPaymentDialog(undefined)}
-          // Show the payment's receipt, or the invoice once the payment is deleted.
+          // Show the new receipt; after a delete, stay on the invoice.
           onSaved={(paymentId) => {
             setPaymentDialog(undefined);
-            void navigate(documentPath(entry.id, paymentId));
+            if (paymentId) void navigate(receiptPath(paymentId));
           }}
         />
       )}
@@ -197,16 +187,25 @@ function InvoiceView({ snapshot, entry, receipt }: { snapshot: Snapshot; entry: 
         {pdf.error && (
           <p className="mb-6 rounded-lg bg-red-50 p-4 text-sm text-red-800">Could not build the PDF: {pdf.error}</p>
         )}
-        {invoice && doc && (
-          <DocumentTabs
-            invoice={invoice}
-            selectedId={doc.id}
-            onSelect={(id) => void navigate(documentPath(entry.id, id === invoice.id ? undefined : id))}
-          />
+        {invoice && invoice.receipts.length > 0 && (
+          <nav className="mb-4 flex flex-wrap items-center gap-2 text-[13px]" aria-label="Receipts">
+            <span className="text-muted">Receipts</span>
+            {invoice.receipts.map((receipt) => (
+              <Link
+                key={receipt.id}
+                to={receiptPath(receipt.id)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-black/10 bg-white px-2.5 py-1 font-medium hover:bg-black/[0.03]"
+              >
+                <ReceiptIcon />
+                {receipt.number ?? receipt.id}
+                <span className="font-normal text-muted tabular-nums">{receipt.summary.amount}</span>
+              </Link>
+            ))}
+          </nav>
         )}
-        {doc &&
+        {invoice &&
           (pdf.previewBytes ? (
-            <PdfPreview bytes={pdf.previewBytes} label={doc.number ?? entryTitle(entry)} />
+            <PdfPreview bytes={pdf.previewBytes} label={invoice.number ?? entryTitle(entry)} />
           ) : (
             !pdf.error && <PageSkeleton />
           ))}
