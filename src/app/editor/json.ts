@@ -99,6 +99,59 @@ export function today() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
+const DAY = 86_400_000;
+const parseDay = (value: unknown) => {
+  const day = typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00Z`) : undefined;
+  return day && !Number.isNaN(day.getTime()) ? day : undefined;
+};
+const formatDay = (day: Date) => day.toISOString().slice(0, 10);
+const monthLength = (year: number, month: number) => new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+
+/** The same day next month; a last-of-the-month date stays the last day (30 Apr → 31 May), others are clamped (31 Jan → 28 Feb). */
+function plusMonth(day: Date) {
+  const [year, month, date] = [day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()];
+  const lastDay = date === monthLength(year, month);
+  const length = monthLength(year, month + 1);
+  return new Date(Date.UTC(year, month + 1, lastDay ? length : Math.min(date, length)));
+}
+
+/**
+ * The next month's invoice from `source`, as a draft: same customer, items, taxes and other fields, with each
+ * item's period moved forward a month, issued on the 1st of the month after the new period (invoices are
+ * postpaid), due 15 days later, under the next free number for that month. A quantity that was the number
+ * of days in the old period (e.g. 31 days of hosting) follows the new period's length.
+ */
+export function duplicateInvoice(source: Obj, numbers: string[]): Obj {
+  const copy = structuredClone(source);
+  let periodEnd: Date | undefined;
+  copy.items = asList(copy.items).map((item) => {
+    if (!isObj(item) || !isObj(item.period)) return item;
+    const start = parseDay(item.period.start);
+    const end = parseDay(item.period.end);
+    const period = { ...item.period };
+    const next = { start: start && plusMonth(start), end: end && plusMonth(end) };
+    if (next.start) period.start = formatDay(next.start);
+    if (next.end) period.end = formatDay(next.end);
+    if (next.end && (!periodEnd || next.end > periodEnd)) periodEnd = next.end;
+    const quantity =
+      start && end && next.start && next.end && item.quantity === Math.round((end.getTime() - start.getTime()) / DAY) + 1
+        ? Math.round((next.end.getTime() - next.start.getTime()) / DAY) + 1
+        : item.quantity;
+    return { ...item, period, ...(quantity === undefined ? {} : { quantity }) };
+  });
+
+  const base = periodEnd ?? parseDay(copy.issueDate) ?? new Date();
+  const issue = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 1));
+  const due = new Date(issue.getTime() + 15 * DAY);
+  return {
+    ...copy,
+    status: "draft",
+    number: nextNumber("INV", numbers, new Date(issue.getUTCFullYear(), issue.getUTCMonth(), 1)),
+    issueDate: formatDay(issue),
+    dueDate: formatDay(due),
+  };
+}
+
 type Files = { file: string; data: unknown }[];
 
 /** Rounds away floating-point noise such as 0.30000000000000004. */

@@ -19,6 +19,7 @@ import { InvoiceForm, PartyForm, SettingsForm } from "./forms.tsx";
 import {
   asList,
   asObj,
+  duplicateInvoice,
   isObj,
   nextNumber,
   type Obj,
@@ -61,6 +62,8 @@ function initialState({ raw, entries }: Snapshot, target: EditTarget): { record:
   }
   if (target.file) return { record: copy(raw.invoices.find((inv) => inv.file === target.file)?.data), customerId: "" };
   const numbers = entries.map((entry) => (entry.ok ? entry.invoice.number : entry.number)).filter(Boolean) as string[];
+  const source = target.from ? raw.invoices.find((inv) => inv.file === target.from)?.data : undefined;
+  if (isObj(source)) return { record: duplicateInvoice(source, numbers), customerId: "" };
   const number = nextNumber("INV", numbers);
   // New invoices show your first bank account; the invoice form can change or remove it.
   const bankAccount = asList(asObj(raw.business).bankAccounts)
@@ -272,7 +275,9 @@ export function Editor({
             : "New customer"
           : target.file
             ? `Edit ${text(asObj(raw.invoices.find((inv) => inv.file === target.file)?.data).number) || fileStem(target.file)}`
-            : "New invoice";
+            : target.from
+              ? `New invoice from ${text(asObj(raw.invoices.find((inv) => inv.file === target.from)?.data).number) || fileStem(target.from)}`
+              : "New invoice";
 
   return (
     <>

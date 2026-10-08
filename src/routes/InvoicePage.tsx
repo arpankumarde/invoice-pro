@@ -8,6 +8,7 @@ import { downloadPdf } from "../app/generate.ts";
 import { PdfPreview } from "../app/PdfPreview.tsx";
 import {
   Code,
+  CopyIcon,
   DownloadIcon,
   Errors,
   PageSkeleton,
@@ -121,6 +122,21 @@ function InvoiceView({ snapshot, entry }: { snapshot: Snapshot; entry: InvoiceEn
               <PencilIcon className="shrink-0" />
               Edit
             </Link>
+            {isObj(record) ? (
+              <Link
+                to={editPath({ kind: "invoice", from: entry.file })}
+                title="Start next month's invoice from this one"
+                className={secondaryButton}
+              >
+                <CopyIcon />
+                Duplicate
+              </Link>
+            ) : (
+              <button type="button" disabled className={secondaryButton}>
+                <CopyIcon />
+                Duplicate
+              </button>
+            )}
             <button
               type="button"
               disabled={!pdf.bytes}

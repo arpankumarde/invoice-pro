@@ -17,7 +17,8 @@ export const customerPath = (id: string) => generatePath("/customers/:customerId
 /** The editor page for a record. Invoices and customers without a file or id start a new one. */
 export function editPath(target: EditTarget) {
   if (target.kind === "invoice") {
-    return generatePath("/edit/invoices/:id?", { id: target.file && invoiceIdOf(target.file) });
+    const path = generatePath("/edit/invoices/:id?", { id: target.file && invoiceIdOf(target.file) });
+    return target.from ? `${path}?from=${encodeURIComponent(invoiceIdOf(target.from))}` : path;
   }
   if (target.kind === "customer") return generatePath("/edit/customers/:id?", { id: target.id });
   return `/edit/${target.kind}`;

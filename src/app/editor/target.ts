@@ -1,6 +1,7 @@
 /** What the editor is working on; `key` strings identify it, e.g. as a React key. */
 export type EditTarget =
-  | { kind: "invoice"; file?: string }
+  // `from` starts a new invoice as next month's copy of that invoice file.
+  | { kind: "invoice"; file?: string; from?: string }
   | { kind: "customer"; id?: string }
   | { kind: "business" }
   | { kind: "settings" };
