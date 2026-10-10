@@ -602,8 +602,11 @@ function buildReceipt(payment: PaymentCore, invoices: InvoiceCore[], histories: 
     summary: {
       amount: fmt.money(amountMinor),
       date: date && fmt.date(date),
+      dateKey: date?.toISOString().slice(0, 10),
       sortKey: payment.sortKey,
       invoices: invoices.map((invoice) => invoice.id),
+      currency: invoices[0].currency,
+      value: fmt.fromMinor(amountMinor),
     },
   };
 }
@@ -630,6 +633,9 @@ function buildInvoice(invoice: InvoiceCore, file: string, receipts: ResolvedRece
       customer: invoice.billTo?.name,
       amountDue: fmt.money(totalMinor),
       issueDate: issueDate && fmt.date(issueDate),
+      issueKey: issueDate?.toISOString().slice(0, 10),
+      dueKey: dueDate?.toISOString().slice(0, 10),
+      dueDate: dueDate && fmt.date(dueDate),
       sortKey: `${issueDate?.toISOString().slice(0, 10) ?? "0000-00-00"} ${number ?? invoice.id}`,
       payment: paidMinor === 0 ? "unpaid" : paidMinor < totalMinor ? "partial" : "paid",
       currency: invoice.currency,

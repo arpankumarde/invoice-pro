@@ -3,6 +3,7 @@ import { CustomerPage } from "./routes/CustomerPage.tsx";
 import { EditorPage } from "./routes/EditorPage.tsx";
 import { InvoicePage } from "./routes/InvoicePage.tsx";
 import { Layout } from "./routes/Layout.tsx";
+import { OverviewPage } from "./routes/OverviewPage.tsx";
 import { ReceiptPage } from "./routes/ReceiptPage.tsx";
 import { editPath } from "./routes/paths.ts";
 
@@ -12,8 +13,10 @@ export const router = createBrowserRouter([
     path: "/",
     Component: Layout,
     children: [
-      // The Invoices tab. "/" lands on the latest invoice.
-      { index: true, Component: InvoicePage },
+      // The overview: what is owed, what is late, this month's billing and the latest payments.
+      { index: true, Component: OverviewPage },
+
+      // The Invoices tab. Unknown invoice ids land on the latest invoice.
       { path: "invoices/:invoiceId", Component: InvoicePage },
       // A payment's receipt, which may cover several invoices.
       { path: "receipts/:receiptId", Component: ReceiptPage },

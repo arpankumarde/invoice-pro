@@ -13,14 +13,25 @@ export function Sidebar({ snapshot, entries }: Workspace) {
   const { pathname } = useLocation();
   const inEditor = useMatch("/edit/*");
   const inCustomers = useMatch("/customers/*");
-  const section = inEditor ? "editor" : inCustomers ? "customers" : "invoices";
-  // Each tab reopens its section where it was left.
-  const [lastPath, setLastPath] = useState({ invoices: "/", customers: "/customers", editor: editPath({ kind: "invoice" }) });
-  if (lastPath[section] !== pathname) setLastPath({ ...lastPath, [section]: pathname });
+  const section = pathname === "/" ? "overview" : inEditor ? "editor" : inCustomers ? "customers" : "invoices";
+  // Each tab reopens its section where it was left. The invoices tab starts on the latest invoice.
+  const [lastPath, setLastPath] = useState({
+    invoices: invoicePath(entries[0]?.id ?? "latest"),
+    customers: "/customers",
+    editor: editPath({ kind: "invoice" }),
+  });
+  if (section !== "overview" && lastPath[section] !== pathname) setLastPath({ ...lastPath, [section]: pathname });
 
   return (
     <aside className="flex shrink-0 flex-col border-b border-line bg-white md:w-72 md:border-r md:border-b-0">
       <div className="px-4 pt-4 pb-2">
+        <Link
+          to="/"
+          aria-current={section === "overview" ? "page" : undefined}
+          className="mb-2 block rounded-md px-2 py-1.5 text-[13px] font-medium text-muted hover:bg-canvas aria-[current]:bg-canvas aria-[current]:text-ink"
+        >
+          Overview
+        </Link>
         <div className="grid grid-cols-3 rounded-md bg-black/[0.05] p-0.5 text-[13px] font-medium" role="tablist">
           {(["invoices", "customers", "editor"] as const).map((name) => (
             <Link
@@ -36,7 +47,7 @@ export function Sidebar({ snapshot, entries }: Workspace) {
         </div>
       </div>
       <nav className="flex-1 overflow-y-auto px-3 pb-3 max-md:max-h-72">
-        {section === "invoices" ? (
+        {section === "invoices" || section === "overview" ? (
           <InvoiceNav entries={entries} />
         ) : section === "customers" ? (
           <CustomerNav snapshot={snapshot} entries={entries} />

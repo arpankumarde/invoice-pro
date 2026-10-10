@@ -26,13 +26,13 @@ import type { Workspace } from "./Layout.tsx";
 import { customerPath, editPath, invoicePath, receiptPath } from "./paths.ts";
 import { PaymentDialog } from "./PaymentDialog.tsx";
 
-/** "/" and "/invoices/:invoiceId": an invoice as the finished PDF, with links to its receipts. */
+/** "/invoices/:invoiceId": an invoice as the finished PDF, with links to its receipts. */
 export function InvoicePage() {
   const { snapshot, entries } = useOutletContext<Workspace>();
   const { invoiceId } = useParams();
   const entry = entries.find((entry) => entry.id === invoiceId);
   if (entry) return <InvoiceView snapshot={snapshot} entry={entry} />;
-  // "/" and invoices that no longer exist land on the latest one.
+  // Invoices that no longer exist land on the latest one.
   if (entries[0]) return <Navigate to={invoicePath(entries[0].id)} replace />;
 
   return (

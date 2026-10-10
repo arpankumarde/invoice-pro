@@ -122,10 +122,16 @@ export interface ResolvedReceipt extends ResolvedDocument {
   summary: {
     amount: string;
     date?: string;
+    /** ISO date (YYYY-MM-DD) the payment was made; unset when the file has no date. */
+    dateKey?: string;
     /** ISO date, for sorting. */
     sortKey: string;
     /** Ids of the invoices it pays, in the payment's order. */
     invoices: string[];
+    /** ISO code of the invoices it pays. */
+    currency: string;
+    /** The amount in currency units (not minor units). */
+    value: number;
   };
 }
 
@@ -137,6 +143,11 @@ export interface ResolvedInvoice extends ResolvedDocument {
     customer?: string;
     amountDue: string;
     issueDate?: string;
+    /** ISO dates (YYYY-MM-DD), unset when the invoice has none. */
+    issueKey?: string;
+    dueKey?: string;
+    /** The due date as shown on the invoice. */
+    dueDate?: string;
     /** ISO date, for sorting. */
     sortKey: string;
     payment: PaymentStatus;
