@@ -8,12 +8,14 @@ import { downloadPdf } from "../app/generate.ts";
 import { PdfPreview } from "../app/PdfPreview.tsx";
 import { invoiceMailto, invoiceMessage } from "../app/share.ts";
 import {
-  CheckIcon,
   Code,
   CopyIcon,
   DownloadIcon,
   Errors,
   MailIcon,
+  MoreMenu,
+  Notice,
+  PageHeader,
   PageSkeleton,
   PaymentBadge,
   PencilIcon,
@@ -22,6 +24,7 @@ import {
   primaryButton,
   secondaryButton,
   StatusBadge,
+  Toast,
 } from "../app/ui.tsx";
 import { usePdf } from "../app/usePdf.ts";
 import type { InvoiceEntry, InvoiceStatus } from "../invoice/types.ts";
@@ -104,34 +107,37 @@ function InvoiceView({ snapshot, entry }: { snapshot: Snapshot; entry: InvoiceEn
 
   return (
     <>
-      <header className="sticky top-0 z-10 border-b border-line bg-canvas/90 backdrop-blur">
-        <div className="mx-auto flex max-w-[880px] flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-8">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2.5">
-              <h2 className="truncate text-lg font-semibold">{entryTitle(entry)}</h2>
-              {!entry.ok && <StatusBadge status={status} invalid />}
-              {invoice && <PaymentBadge payment={invoice.summary.payment} />}
-            </div>
-            <p className="mt-0.5 truncate text-[13px] text-muted">
-              {invoice ? (
-                <>
-                  {entry.customerId && invoice.summary.customer ? (
-                    <Link to={customerPath(entry.customerId)} className="hover:text-ink hover:underline">
-                      {invoice.summary.customer}
-                    </Link>
-                  ) : (
-                    invoice.summary.customer
-                  )}
-                  {invoice.summary.customer && " · "}
-                  {invoice.headline}
-                </>
+      <PageHeader
+        title={entryTitle(entry)}
+        badges={
+          <>
+            {!entry.ok && <StatusBadge status={status} invalid />}
+            {invoice && <PaymentBadge payment={invoice.summary.payment} />}
+          </>
+        }
+        subtitle={
+          invoice ? (
+            <>
+              {entry.customerId && invoice.summary.customer ? (
+                <Link to={customerPath(entry.customerId)} className="hover:text-ink hover:underline">
+                  {invoice.summary.customer}
+                </Link>
               ) : (
-                entry.file
+                invoice.summary.customer
               )}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <StatusToggle status={status} disabled={saving || !isObj(record)} onChange={(next) => void setStatus(next)} />
+              {invoice.summary.customer && " · "}
+              <span className="whitespace-nowrap">{invoice.headline}</span>
+            </>
+          ) : (
+            entry.file
+          )
+        }
+        actions={
+          <>
+            <Link to={editPath({ kind: "invoice", file: entry.file })} className={secondaryButton}>
+              <PencilIcon className="shrink-0" />
+              Edit
+            </Link>
             <button
               type="button"
               disabled={!isObj(record) || invoice?.summary.payment === "paid"}
@@ -142,39 +148,24 @@ function InvoiceView({ snapshot, entry }: { snapshot: Snapshot; entry: InvoiceEn
               <ReceiptIcon />
               Record payment
             </button>
-            <Link to={editPath({ kind: "invoice", file: entry.file })} className={secondaryButton}>
-              <PencilIcon className="shrink-0" />
-              Edit
-            </Link>
-            {isObj(record) ? (
-              <Link
-                to={editPath({ kind: "invoice", from: entry.file })}
-                title="Start next month's invoice from this one"
-                className={secondaryButton}
-              >
-                <CopyIcon />
-                Duplicate
-              </Link>
-            ) : (
-              <button type="button" disabled className={secondaryButton}>
-                <CopyIcon />
-                Duplicate
-              </button>
-            )}
-            <button type="button" disabled={!invoice} onClick={() => void copySummary()} className={secondaryButton}>
-              {copied ? <CheckIcon /> : <CopyIcon />}
-              {copied ? "Copied" : "Copy summary"}
-            </button>
-            <button
-              type="button"
-              disabled={!pdf.bytes}
-              title={invoice?.billTo?.email ? `Email ${invoice.billTo.email}` : "Open a new email"}
-              onClick={emailInvoice}
-              className={secondaryButton}
-            >
-              <MailIcon />
-              Email
-            </button>
+            <MoreMenu
+              items={[
+                {
+                  label: "Email to customer",
+                  icon: <MailIcon />,
+                  disabled: !pdf.bytes,
+                  title: invoice?.billTo?.email ? `Email ${invoice.billTo.email}` : "Open a new email",
+                  onSelect: emailInvoice,
+                },
+                { label: "Copy summary", icon: <CopyIcon />, disabled: !invoice, onSelect: () => void copySummary() },
+                {
+                  label: "Duplicate for next month",
+                  icon: <PlusIcon />,
+                  disabled: !isObj(record),
+                  to: editPath({ kind: "invoice", from: entry.file }),
+                },
+              ]}
+            />
             <button
               type="button"
               disabled={!pdf.bytes}
@@ -184,9 +175,10 @@ function InvoiceView({ snapshot, entry }: { snapshot: Snapshot; entry: InvoiceEn
               <DownloadIcon />
               {invoice?.status === "draft" ? "Download draft" : "Download PDF"}
             </button>
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
+      <Toast message={copied ? "Summary copied" : undefined} />
 
       {paymentDialog && (
         <PaymentDialog
@@ -202,24 +194,21 @@ function InvoiceView({ snapshot, entry }: { snapshot: Snapshot; entry: InvoiceEn
         />
       )}
 
-      <div className="mx-auto max-w-[880px] px-4 py-6 sm:px-8">
+      <div className="mx-auto max-w-[880px] space-y-4 px-4 py-6 sm:px-8">
         {saveError && (
-          <p className="mb-6 rounded-lg bg-red-50 p-4 text-sm text-red-800" role="alert">
+          <Notice tone="error" onDismiss={() => setSaveError(undefined)}>
             {saveError}
-          </p>
+          </Notice>
         )}
         {emailNote && (
-          <p className="mb-6 rounded-lg bg-black/[0.04] p-4 text-sm" role="status">
+          <Notice tone="info" onDismiss={() => setEmailNote(undefined)}>
             {emailNote}
-          </p>
+          </Notice>
         )}
         {brokenPayments.length > 0 && (
-          <div className="mb-6 flex flex-wrap items-center gap-2 rounded-lg bg-red-50 p-4 text-sm text-red-800" role="alert">
-            <span className="mr-auto">
-              {brokenPayments.length === 1 ? "A payment" : `${brokenPayments.length} payments`} towards this invoice
-              {brokenPayments.length === 1 ? " has" : " have"} problems.
-            </span>
-            {brokenPayments.map((payment) => (
+          <Notice
+            tone="error"
+            action={brokenPayments.map((payment) => (
               <button
                 key={payment.file}
                 type="button"
@@ -230,7 +219,10 @@ function InvoiceView({ snapshot, entry }: { snapshot: Snapshot; entry: InvoiceEn
                 Fix {paymentTitle(payment)}
               </button>
             ))}
-          </div>
+          >
+            {brokenPayments.length === 1 ? "A payment" : `${brokenPayments.length} payments`} towards this invoice
+            {brokenPayments.length === 1 ? " has" : " have"} problems.
+          </Notice>
         )}
         {!entry.ok && (
           <Errors
@@ -243,25 +235,26 @@ function InvoiceView({ snapshot, entry }: { snapshot: Snapshot; entry: InvoiceEn
             errors={entry.errors}
           />
         )}
-        {pdf.error && (
-          <p className="mb-6 rounded-lg bg-red-50 p-4 text-sm text-red-800">Could not build the PDF: {pdf.error}</p>
-        )}
-        {invoice && invoice.receipts.length > 0 && (
-          <nav className="mb-4 flex flex-wrap items-center gap-2 text-[13px]" aria-label="Receipts">
-            <span className="text-muted">Receipts</span>
-            {invoice.receipts.map((receipt) => (
-              <Link
-                key={receipt.id}
-                to={receiptPath(receipt.id)}
-                className="inline-flex items-center gap-1.5 rounded-md border border-black/10 bg-white px-2.5 py-1 font-medium hover:bg-black/[0.03]"
-              >
-                <ReceiptIcon />
-                {receipt.number ?? receipt.id}
-                <span className="font-normal text-muted tabular-nums">{receipt.summary.amount}</span>
-              </Link>
-            ))}
-          </nav>
-        )}
+        {pdf.error && <Notice tone="error">Could not build the PDF: {pdf.error}</Notice>}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <StatusToggle status={status} disabled={saving || !isObj(record)} onChange={(next) => void setStatus(next)} />
+          {invoice && invoice.receipts.length > 0 && (
+            <nav className="flex flex-wrap items-center gap-2 text-[13px]" aria-label="Receipts">
+              <span className="text-muted">Receipts</span>
+              {invoice.receipts.map((receipt) => (
+                <Link
+                  key={receipt.id}
+                  to={receiptPath(receipt.id)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-black/10 bg-white px-2.5 py-1 font-medium hover:bg-black/[0.03]"
+                >
+                  <ReceiptIcon />
+                  {receipt.number ?? receipt.id}
+                  <span className="font-normal text-muted tabular-nums">{receipt.summary.amount}</span>
+                </Link>
+              ))}
+            </nav>
+          )}
+        </div>
         {invoice &&
           (pdf.previewBytes ? (
             <PdfPreview bytes={pdf.previewBytes} label={invoice.number ?? entryTitle(entry)} />
@@ -284,7 +277,7 @@ function StatusToggle({
   onChange: (status: InvoiceStatus) => void;
 }) {
   return (
-    <div className="flex h-9 rounded-md bg-black/[0.05] p-0.5 text-[13px] font-medium" role="radiogroup" aria-label="Status">
+    <div className="flex h-8 rounded-md bg-black/[0.05] p-0.5 text-[13px] font-medium" role="radiogroup" aria-label="Status">
       {(["draft", "final"] as const).map((option) => (
         <button
           key={option}

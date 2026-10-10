@@ -1,5 +1,7 @@
+import { type ReactNode, useState } from "react";
 import { BANK_FIELDS, DEFAULT_SETTINGS } from "../../invoice/resolve.ts";
 import type { DataSet } from "../../invoice/types.ts";
+import { ChevronIcon } from "../ui.tsx";
 import {
   AddButton,
   Checkbox,
@@ -199,6 +201,24 @@ function TaxPicker({
   );
 }
 
+/**
+ * A line item's less common options, folded away. Starts open when the line already uses them;
+ * `summary` names what is set, so it shows while folded.
+ */
+function LineMore({ summary, children }: { summary: string; children: ReactNode }) {
+  const [open] = useState(summary !== "");
+  return (
+    <details open={open} className="group/more mt-3">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded text-xs font-medium text-muted select-none hover:text-ink [&::-webkit-details-marker]:hidden">
+        <ChevronIcon className="size-3.5 transition-transform group-open/more:rotate-90" />
+        More options
+        {summary && <span className="font-normal text-muted/80">· {summary}</span>}
+      </summary>
+      <div className="mt-3 space-y-3">{children}</div>
+    </details>
+  );
+}
+
 export function InvoiceForm({
   record,
   onChange,
@@ -342,7 +362,9 @@ export function InvoiceForm({
                   <TextInput type="date" value={period.end} onChange={(value) => setPeriod("end", value)} />
                 </Field>
               </div>
-              <div className="mt-3">
+              <LineMore
+                summary={[(asList(item.details).length > 0 || text(item.details) !== "") && "extra lines", ownTaxes && "own tax"].filter(Boolean).join(", ")}
+              >
                 <Field label="Extra lines under the description">
                   <LinesInput
                     rows={2}
@@ -350,8 +372,7 @@ export function InvoiceForm({
                     onChange={(value) => updateItem(index, (it) => setKey(it, "details", value))}
                   />
                 </Field>
-              </div>
-              <div className="mt-3 space-y-2">
+                <div className="space-y-2">
                 <Field label="Tax on this line">
                   <Select
                     value={ownTaxes ? "own" : "default"}
@@ -373,7 +394,8 @@ export function InvoiceForm({
                     onChange={(ids) => updateItem(index, (it) => ({ ...it, taxes: ids }))}
                   />
                 )}
-              </div>
+                </div>
+              </LineMore>
             </div>
           );
         })}

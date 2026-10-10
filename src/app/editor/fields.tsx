@@ -1,17 +1,38 @@
 import type { ReactNode } from "react";
-import { PlusIcon, TrashIcon } from "../ui.tsx";
+import { InfoIcon, PlusIcon, TrashIcon } from "../ui.tsx";
 import { asList, asObj, type Obj, text } from "./json.ts";
 
 const controlBase =
   "block w-full rounded-md border border-black/10 bg-white px-2.5 text-sm text-ink outline-none placeholder:text-black/30 focus:border-black/30 focus:ring-2 focus:ring-black/[0.06]";
 const control = `mt-1 ${controlBase}`;
 
+/**
+ * A labelled control. The hint stays out of the way behind an ⓘ next to the label, and shows
+ * while the control has focus or the ⓘ is hovered.
+ */
 export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
-    <label className="block min-w-0">
-      <span className="text-xs font-medium text-muted">{label}</span>
+    <label className="group/field relative block min-w-0">
+      <span className="flex items-center gap-1 text-xs font-medium text-muted">
+        {label}
+        {hint && (
+          <span data-hint className="cursor-help text-black/30 group-focus-within/field:text-muted hover:text-muted">
+            <InfoIcon />
+          </span>
+        )}
+      </span>
       {children}
-      {hint && <span className="mt-1 block text-[11px] leading-snug text-muted">{hint}</span>}
+      {hint && (
+        <>
+          <span className="sr-only">{hint}</span>
+          <span
+            aria-hidden
+            className="pointer-events-none invisible absolute top-full left-0 z-20 mt-1.5 w-max max-w-64 rounded-md bg-ink px-2.5 py-1.5 text-[11px] leading-snug text-white opacity-0 shadow-lg transition-opacity group-focus-within/field:visible group-focus-within/field:opacity-100 group-has-[[data-hint]:hover]/field:visible group-has-[[data-hint]:hover]/field:opacity-100"
+          >
+            {hint}
+          </span>
+        </>
+      )}
     </label>
   );
 }

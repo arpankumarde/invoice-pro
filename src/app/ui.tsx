@@ -1,5 +1,195 @@
-import type { ReactNode } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import type { InvoiceStatus, PaymentStatus, ResolvedInvoice } from "../invoice/types.ts";
+
+/** The bar at the top of every page: what it shows on the left, what you can do with it on the right. */
+export function PageHeader({
+  title,
+  badges,
+  subtitle,
+  actions,
+  wide,
+}: {
+  title: ReactNode;
+  badges?: ReactNode;
+  subtitle?: ReactNode;
+  actions?: ReactNode;
+  /** Spans the whole page instead of the centred column, for the editor. */
+  wide?: boolean;
+}) {
+  return (
+    <header className="sticky top-0 z-20 border-b border-line bg-canvas/85 backdrop-blur">
+      <div
+        className={`mx-auto flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-4 py-4 sm:px-8 ${wide ? "" : "max-w-[880px]"}`}
+      >
+        <div className="min-w-0 flex-1 basis-72">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="truncate text-lg font-semibold tracking-tight">{title}</h2>
+            {badges}
+          </div>
+          {subtitle && <p className="mt-0.5 text-[13px] text-pretty text-muted">{subtitle}</p>}
+        </div>
+        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      </div>
+    </header>
+  );
+}
+
+const NOTICE_TONES = {
+  error: "bg-red-50 text-red-800 ring-red-200/70",
+  warning: "bg-amber-50 text-amber-900 ring-amber-200/70",
+  info: "bg-white text-ink ring-black/[0.08]",
+};
+
+/** A one-line message above the page content. */
+export function Notice({
+  tone,
+  children,
+  action,
+  onDismiss,
+}: {
+  tone: keyof typeof NOTICE_TONES;
+  children: ReactNode;
+  /** Buttons at the end of the message. */
+  action?: ReactNode;
+  onDismiss?: () => void;
+}) {
+  return (
+    <div
+      className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg px-4 py-3 text-[13px] leading-relaxed ring-1 ring-inset ${NOTICE_TONES[tone]}`}
+      role={tone === "info" ? "status" : "alert"}
+    >
+      <div className="min-w-0 flex-1">{children}</div>
+      {action}
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          className="-my-1 -mr-1.5 grid size-7 shrink-0 place-items-center rounded-md opacity-60 hover:bg-black/[0.05] hover:opacity-100"
+        >
+          <CloseIcon />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** A short confirmation floating at the bottom of the screen, e.g. "Copied". Nothing while `message` is empty. */
+export function Toast({ message }: { message?: string }) {
+  return (
+    <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4">
+      {message && (
+        <div className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-[13px] font-medium text-white shadow-lg">
+          <CheckIcon />
+          {message}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export interface MenuItem {
+  label: string;
+  icon?: ReactNode;
+  /** A link instead of an action. */
+  to?: string;
+  onSelect?: () => void;
+  disabled?: boolean;
+  title?: string;
+}
+
+/** A "⋯" button that opens the less common actions, so the header only shows the main ones. */
+export function MoreMenu({ label = "More actions", items }: { label?: string; items: MenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    menu.current?.querySelector<HTMLElement>("[role=menuitem]:not(:disabled)")?.focus();
+    const onPointerDown = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      setOpen(false);
+      trigger.current?.focus();
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const options = [...(menu.current?.querySelectorAll<HTMLElement>("[role=menuitem]:not(:disabled)") ?? [])];
+    const at = options.indexOf(document.activeElement as HTMLElement);
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    options[(at + step + options.length) % options.length]?.focus();
+  };
+
+  const itemClass =
+    "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] text-ink outline-none hover:bg-black/[0.04] focus-visible:bg-black/[0.05] disabled:cursor-not-allowed disabled:opacity-40 [&_svg]:text-muted";
+
+  return (
+    <div ref={root} className="relative" onKeyDown={onKeyDown}>
+      <button
+        ref={trigger}
+        type="button"
+        aria-label={label}
+        title={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className={`${iconButton} border border-black/10 bg-white aria-expanded:bg-black/[0.04]`}
+      >
+        <MoreIcon />
+      </button>
+      {open && (
+        <div
+          ref={menu}
+          role="menu"
+          aria-label={label}
+          className="absolute top-full right-0 z-30 mt-1.5 min-w-52 rounded-lg border border-black/[0.08] bg-white p-1 shadow-[0_4px_24px_rgba(0,0,0,0.1)]"
+        >
+          {items.map((item) =>
+            item.to && !item.disabled ? (
+              <Link
+                key={item.label}
+                to={item.to}
+                role="menuitem"
+                title={item.title}
+                onClick={() => setOpen(false)}
+                className={itemClass}
+              >
+                {item.icon}
+                {item.label}
+              </Link>
+            ) : (
+              <button
+                key={item.label}
+                type="button"
+                role="menuitem"
+                title={item.title}
+                disabled={item.disabled}
+                onClick={() => {
+                  setOpen(false);
+                  item.onSelect?.();
+                }}
+                className={itemClass}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            ),
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function StatusBadge({ status, invalid }: { status: InvoiceStatus; invalid?: boolean }) {
   const [label, tone] = invalid
@@ -82,6 +272,10 @@ export const buttonClass =
   "inline-flex h-9 shrink-0 items-center gap-2 rounded-md px-3.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40";
 export const primaryButton = `${buttonClass} bg-ink text-white shadow-sm hover:bg-black`;
 export const secondaryButton = `${buttonClass} border border-black/10 bg-white text-ink hover:bg-black/[0.03]`;
+/** Quiet actions, e.g. Delete, that shouldn't compete with the main ones. */
+export const ghostButton = `${buttonClass} text-muted hover:bg-black/[0.04] hover:text-ink`;
+export const iconButton =
+  "inline-grid size-9 shrink-0 place-items-center rounded-md text-ink transition hover:bg-black/[0.04] disabled:cursor-not-allowed disabled:opacity-40";
 
 const iconProps = {
   width: 16,
@@ -149,6 +343,84 @@ export function ReceiptIcon() {
   return (
     <svg {...iconProps}>
       <path d="M3.5 2.5h9v11l-1.5-1-1.5 1-1.5-1-1.5 1-1.5-1-1.5 1v-11zM6 6h4M6 8.5h4" />
+    </svg>
+  );
+}
+
+export function MoreIcon() {
+  return (
+    <svg {...iconProps} strokeWidth={2.25}>
+      <path d="M3.5 8h.01M8 8h.01M12.5 8h.01" />
+    </svg>
+  );
+}
+
+export function CloseIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M4 4l8 8M12 4l-8 8" />
+    </svg>
+  );
+}
+
+export function ChevronIcon({ className }: { className?: string }) {
+  return (
+    <svg {...iconProps} className={className}>
+      <path d="M6 3.5L10.5 8 6 12.5" />
+    </svg>
+  );
+}
+
+export function InfoIcon() {
+  return (
+    <svg {...iconProps} width={12} height={12}>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 7.5v3.5M8 5h.01" />
+    </svg>
+  );
+}
+
+export function SearchIcon({ className }: { className?: string }) {
+  return (
+    <svg {...iconProps} width={14} height={14} className={className}>
+      <circle cx="7" cy="7" r="4.25" />
+      <path d="M10.25 10.25L13.5 13.5" />
+    </svg>
+  );
+}
+
+export function HomeIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M2.5 7L8 2.5 13.5 7v6a.5.5 0 0 1-.5.5h-3v-4H6v4H3a.5.5 0 0 1-.5-.5V7z" />
+    </svg>
+  );
+}
+
+export function DocumentIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M9.5 2H4.5A1 1 0 0 0 3.5 3v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5L9.5 2z" />
+      <path d="M9.5 2v3h3M6 8.5h4M6 11h2.5" />
+    </svg>
+  );
+}
+
+export function PeopleIcon() {
+  return (
+    <svg {...iconProps}>
+      <circle cx="6" cy="5.5" r="2.25" />
+      <path d="M2 13c.4-2.2 2-3.5 4-3.5s3.6 1.3 4 3.5M10.5 3.4a2.25 2.25 0 0 1 0 4.2M12 9.8c1 .5 1.7 1.6 2 3.2" />
+    </svg>
+  );
+}
+
+export function SlidersIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M3 4.5h6M12 4.5h1M3 11.5h1M7 11.5h6" />
+      <circle cx="10.5" cy="4.5" r="1.5" />
+      <circle cx="5.5" cy="11.5" r="1.5" />
     </svg>
   );
 }

@@ -48,6 +48,20 @@ export function todayKey(now = new Date()) {
 const DAY_MS = 86_400_000;
 const daysBetween = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS);
 
+/** What is still owed on an invoice, in minor units. Drafts haven't been sent, so they owe nothing. */
+export function owedMinor(entry: InvoiceEntry) {
+  if (!entry.ok || entry.invoice.status !== "final") return 0;
+  const { settings, summary } = entry.invoice;
+  const fmt = createFormatters(settings.locale, summary.currency);
+  return fmt.toMinor(summary.total) - fmt.toMinor(summary.paid);
+}
+
+/** A final invoice past its due date with something left to pay. `today` is YYYY-MM-DD. */
+export function isOverdue(entry: InvoiceEntry, today: string) {
+  const dueKey = entry.ok ? entry.invoice.summary.dueKey : undefined;
+  return !!dueKey && dueKey < today && owedMinor(entry) > 0;
+}
+
 class Totals {
   private readonly sums = new Map<string, { locale: string; minor: number }>();
 
@@ -82,9 +96,9 @@ export function overview(entries: InvoiceEntry[], payments: PaymentEntry[], toda
     if (!entry.ok || entry.invoice.status !== "final") continue;
     const { invoice } = entry;
     const { locale } = invoice.settings;
-    const { currency, total, paid, issueKey, dueKey } = invoice.summary;
+    const { currency, total, issueKey, dueKey } = invoice.summary;
     const fmt = createFormatters(locale, currency);
-    const owed = fmt.toMinor(total) - fmt.toMinor(paid);
+    const owed = owedMinor(entry);
 
     if (issueKey?.startsWith(month)) billed.add(locale, currency, total);
     if (owed <= 0) continue;

@@ -7,12 +7,13 @@ import { refresh, type Snapshot } from "../data.ts";
 import { PdfPreview } from "../PdfPreview.tsx";
 import {
   CheckIcon,
-  Code,
   DocumentTabs,
   Errors,
+  ghostButton,
+  Notice,
+  PageHeader,
   PageSkeleton,
   primaryButton,
-  secondaryButton,
   TrashIcon,
 } from "../ui.tsx";
 import { usePdf } from "../usePdf.ts";
@@ -310,23 +311,27 @@ export function Editor({
 
   return (
     <>
-      <header className="sticky top-0 z-10 border-b border-line bg-canvas/90 backdrop-blur">
-        <div className="flex flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-8">
-          <div className="min-w-0">
-            <h2 className="truncate text-lg font-semibold">{title}</h2>
-            <p className="mt-0.5 text-[13px] text-muted">
-              {isNewInvoice ? "Will be saved as " : ""}
-              <Code>{`${DATA_FOLDER}/${path}`}</Code>
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className={`text-[13px] ${saveError ? "text-red-700" : "text-muted"}`} role="status">
+      <PageHeader
+        wide
+        title={title}
+        subtitle={
+          <span className="font-mono text-[12px]">
+            {isNewInvoice ? "Will be saved as " : ""}
+            {`${DATA_FOLDER}/${path}`}
+          </span>
+        }
+        actions={
+          <>
+            <span className={`mr-1 text-[13px] ${saveError ? "text-red-700" : "text-muted"}`} role="status">
               {saveError ? (
                 `Not saved: ${saveError}`
               ) : saving ? (
                 "Saving…"
               ) : dirty ? (
-                isNew ? "Not saved yet" : "Unsaved changes"
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="size-1.5 rounded-full bg-amber-500" aria-hidden />
+                  {isNew ? "Not saved yet" : "Unsaved changes"}
+                </span>
               ) : (
                 <span className="inline-flex items-center gap-1">
                   <CheckIcon />
@@ -335,7 +340,11 @@ export function Editor({
               )}
             </span>
             {((target.kind === "invoice" && target.file) || (target.kind === "customer" && target.id)) && (
-              <button type="button" onClick={() => void remove()} className={secondaryButton}>
+              <button
+                type="button"
+                onClick={() => void remove()}
+                className={`${ghostButton} hover:bg-red-50 hover:text-red-700`}
+              >
                 <TrashIcon />
                 Delete
               </button>
@@ -349,26 +358,28 @@ export function Editor({
             >
               {saving ? "Saving…" : "Save"}
             </button>
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       <div className="grid gap-8 px-4 py-6 sm:px-8 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
         <div className="min-w-0">
           {target.kind === "customer" && !id && (
-            <p className="mb-4 rounded-md bg-amber-50 px-3 py-2 text-[13px] text-amber-900">
-              Give the customer an id to save it.
-            </p>
+            <div className="mb-4">
+              <Notice tone="warning">Give the customer an id to save it.</Notice>
+            </div>
           )}
           {fileTaken && (
-            <p className="mb-4 rounded-md bg-amber-50 px-3 py-2 text-[13px] text-amber-900">
-              There's already an invoice saved as {path}. Change the invoice number to save this one.
-            </p>
+            <div className="mb-4">
+              <Notice tone="warning">
+                There's already an invoice saved as {path}. Change the invoice number to save this one.
+              </Notice>
+            </div>
           )}
           {takenId && (
-            <p className="mb-4 rounded-md bg-amber-50 px-3 py-2 text-[13px] text-amber-900">
-              Another customer already uses the id "{id}". Saving will replace it.
-            </p>
+            <div className="mb-4">
+              <Notice tone="warning">Another customer already uses the id "{id}". Saving will replace it.</Notice>
+            </div>
           )}
           {target.kind === "invoice" ? (
             <InvoiceForm
@@ -437,7 +448,11 @@ export function Editor({
                 </p>
               )}
               <DocumentTabs invoice={entry.invoice} selectedId={shown?.id ?? entry.id} onSelect={setPreviewId} />
-              {pdf.error && <p className="mb-4 rounded-lg bg-red-50 p-4 text-sm text-red-800">{pdf.error}</p>}
+              {pdf.error && (
+                <div className="mb-4">
+                  <Notice tone="error">{pdf.error}</Notice>
+                </div>
+              )}
               {pdf.previewBytes ? (
                 <PdfPreview bytes={pdf.previewBytes} label={`${title} preview`} />
               ) : (

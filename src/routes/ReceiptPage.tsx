@@ -9,6 +9,8 @@ import {
   Code,
   DownloadIcon,
   Errors,
+  Notice,
+  PageHeader,
   PageSkeleton,
   PencilIcon,
   primaryButton,
@@ -44,36 +46,30 @@ function ReceiptView({ snapshot, entries, payment }: { snapshot: Snapshot; entri
 
   return (
     <>
-      <header className="sticky top-0 z-10 border-b border-line bg-canvas/90 backdrop-blur">
-        <div className="mx-auto flex max-w-[880px] flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-8">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2.5">
-              <h2 className="truncate text-lg font-semibold">Receipt {paymentTitle(payment)}</h2>
-              {!receipt ? (
-                <StatusBadge status="draft" invalid />
+      <PageHeader
+        title={`Receipt ${paymentTitle(payment)}`}
+        badges={
+          !receipt ? <StatusBadge status="draft" invalid /> : receipt.status === "draft" && <StatusBadge status="draft" />
+        }
+        subtitle={
+          receipt ? (
+            <>
+              {payment.customerId && customer ? (
+                <Link to={customerPath(payment.customerId)} className="hover:text-ink hover:underline">
+                  {customer}
+                </Link>
               ) : (
-                receipt.status === "draft" && <StatusBadge status="draft" />
+                customer
               )}
-            </div>
-            <p className="mt-0.5 truncate text-[13px] text-muted">
-              {receipt ? (
-                <>
-                  {payment.customerId && customer ? (
-                    <Link to={customerPath(payment.customerId)} className="hover:text-ink hover:underline">
-                      {customer}
-                    </Link>
-                  ) : (
-                    customer
-                  )}
-                  {customer && " · "}
-                  {receipt.headline}
-                </>
-              ) : (
-                payment.file
-              )}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
+              {customer && " · "}
+              <span className="whitespace-nowrap">{receipt.headline}</span>
+            </>
+          ) : (
+            payment.file
+          )
+        }
+        actions={
+          <>
             <button type="button" onClick={() => setEditing(true)} className={secondaryButton}>
               <PencilIcon className="shrink-0" />
               Edit payment
@@ -87,9 +83,9 @@ function ReceiptView({ snapshot, entries, payment }: { snapshot: Snapshot; entri
               <DownloadIcon />
               {receipt?.status === "draft" ? "Download draft" : "Download PDF"}
             </button>
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       {editing && (
         <PaymentDialog
@@ -106,9 +102,9 @@ function ReceiptView({ snapshot, entries, payment }: { snapshot: Snapshot; entri
         />
       )}
 
-      <div className="mx-auto max-w-[880px] px-4 py-6 sm:px-8">
+      <div className="mx-auto max-w-[880px] space-y-4 px-4 py-6 sm:px-8">
         {!payment.ok && (
-          <div className="mb-6">
+          <div>
             <Errors
               title="This receipt can't be generated yet"
               intro={
@@ -121,10 +117,10 @@ function ReceiptView({ snapshot, entries, payment }: { snapshot: Snapshot; entri
           </div>
         )}
         {pdf.error && (
-          <p className="mb-6 rounded-lg bg-red-50 p-4 text-sm text-red-800">Could not build the PDF: {pdf.error}</p>
+          <Notice tone="error">Could not build the PDF: {pdf.error}</Notice>
         )}
         {invoices.length > 0 && (
-          <nav className="mb-4 flex flex-wrap items-center gap-2 text-[13px]" aria-label="Invoices paid">
+          <nav className="flex flex-wrap items-center gap-2 text-[13px]" aria-label="Invoices paid">
             <span className="text-muted">Pays</span>
             {invoices.map((invoice) =>
               invoice.exists ? (

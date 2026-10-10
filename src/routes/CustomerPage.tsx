@@ -6,6 +6,8 @@ import { customerDetails, type CustomerSummary, customerSummaries } from "../app
 import { entryStatus, entryTitle, paymentTitle } from "../app/entries.ts";
 import {
   Code,
+  Notice,
+  PageHeader,
   PaymentBadge,
   PencilIcon,
   PlusIcon,
@@ -62,15 +64,11 @@ function CustomerView({
 
   return (
     <>
-      <header className="sticky top-0 z-10 border-b border-line bg-canvas/90 backdrop-blur">
-        <div className="mx-auto flex max-w-[880px] flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-8">
-          <div className="min-w-0">
-            <h2 className="truncate text-lg font-semibold">{customer.name ?? customer.id}</h2>
-            <p className="mt-0.5 truncate text-[13px] text-muted">
-              {customer.id} · {plural(customer.entries.length, "invoice")}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
+      <PageHeader
+        title={customer.name ?? customer.id}
+        subtitle={`${customer.id} · ${plural(customer.entries.length, "invoice")}`}
+        actions={
+          <>
             {customer.defined && (
               <Link to={editPath({ kind: "customer", id: customer.id })} className={secondaryButton}>
                 <PencilIcon className="shrink-0" />
@@ -86,9 +84,9 @@ function CustomerView({
               <ReceiptIcon />
               Record payment
             </button>
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       {paymentDialog && (
         <PaymentDialog
@@ -106,10 +104,10 @@ function CustomerView({
 
       <div className="mx-auto max-w-[880px] space-y-6 px-4 py-6 sm:px-8">
         {!customer.defined && (
-          <p className="rounded-lg bg-red-50 p-4 text-sm text-red-800" role="alert">
+          <Notice tone="error">
             These invoices bill <Code>{customer.id}</Code>, which isn't defined in{" "}
             <Code>{`${DATA_FOLDER}/customers.json`}</Code>.
-          </p>
+          </Notice>
         )}
 
         {customer.balances.length > 0 && (

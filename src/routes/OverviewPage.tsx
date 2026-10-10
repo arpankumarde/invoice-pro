@@ -2,7 +2,7 @@ import { type ReactNode } from "react";
 import { Link, useOutletContext } from "react-router";
 import { overview, type CurrencyTotal, todayKey } from "../app/overview.ts";
 import { entryTitle, joinParts } from "../app/entries.ts";
-import { PlusIcon, primaryButton } from "../app/ui.tsx";
+import { PageHeader, PlusIcon, primaryButton } from "../app/ui.tsx";
 import type { Workspace } from "./Layout.tsx";
 import { customerPath, editPath, invoicePath, receiptPath } from "./paths.ts";
 
@@ -28,14 +28,16 @@ export function OverviewPage() {
 
   return (
     <>
-      <header className="border-b border-line bg-canvas/90">
-        <div className="mx-auto max-w-[880px] px-4 py-4 sm:px-8">
-          <h2 className="text-lg font-semibold">Overview</h2>
-          <p className="mt-0.5 text-[13px] text-muted">
-            Final invoices only{data.drafts > 0 && `, ${data.drafts} ${data.drafts === 1 ? "draft is" : "drafts are"} not counted`}
-          </p>
-        </div>
-      </header>
+      <PageHeader
+        title="Overview"
+        subtitle={`Final invoices only${data.drafts > 0 ? `, ${data.drafts} ${data.drafts === 1 ? "draft is" : "drafts are"} not counted` : ""}`}
+        actions={
+          <Link to={editPath({ kind: "invoice" })} className={primaryButton}>
+            <PlusIcon />
+            New invoice
+          </Link>
+        }
+      />
 
       <div className="mx-auto max-w-[880px] space-y-6 px-4 py-6 sm:px-8">
         <section className="grid gap-3 sm:grid-cols-3">
