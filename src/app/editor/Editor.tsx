@@ -1,4 +1,5 @@
-import { useEffect, useEffectEvent, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useBlocker } from "react-router";
 import { resolveAll } from "../../invoice/resolve.ts";
 import type { DataSet, InvoiceEntry } from "../../invoice/types.ts";
 import { DATA_FOLDER, deleteFile, saveFile } from "../api.ts";
@@ -186,10 +187,17 @@ export function Editor({
   const isNew = isNewInvoice || (target.kind === "customer" && !target.id);
   const takenId = target.kind === "customer" && id !== target.id && id in asObj(raw.customers);
   const fileTaken = isNewInvoice && raw.invoices.some((inv) => inv.file === path);
-  const [savedOutput, setSavedOutput] = useState(() =>
-    isNew ? "" : toJson(payloadFor(initial.record, initial.customerId.trim())),
-  );
+  const [initialOutput] = useState(() => toJson(payloadFor(initial.record, initial.customerId.trim())));
+  const [savedOutput, setSavedOutput] = useState(() => (isNew ? "" : initialOutput));
   const dirty = output !== savedOutput;
+  // A new record that hasn't been touched has nothing to lose, even though it isn't saved yet.
+  const unsaved = dirty && !(isNew && output === initialOutput);
+  // Set when the editor itself navigates away (after a save or a delete), which must not prompt.
+  const leaving = useRef(false);
+  const leave = (next: EditTarget) => {
+    leaving.current = true;
+    onNavigate(next);
+  };
   const canSave = !saving && !jsonError && !fileTaken && !(target.kind === "customer" && !id);
 
   // Rebuild the preview shortly after typing stops rather than on every keystroke.
@@ -213,8 +221,8 @@ export function Editor({
       await refresh();
       setSavedOutput(output);
       // New records continue in the editor under their saved name.
-      if (isNewInvoice) onNavigate({ kind: "invoice", file: path });
-      else if (target.kind === "customer" && target.id !== id) onNavigate({ kind: "customer", id });
+      if (isNewInvoice) leave({ kind: "invoice", file: path });
+      else if (target.kind === "customer" && target.id !== id) leave({ kind: "customer", id });
     } catch (error) {
       setSaveError((error as Error).message);
     } finally {
@@ -245,11 +253,32 @@ export function Editor({
         await saveFile("customers.json", remaining);
       }
       await refresh();
-      onNavigate({ kind: target.kind });
+      leave({ kind: target.kind });
     } catch (error) {
       setSaveError((error as Error).message);
     }
   };
+
+  // Ask before in-app navigation (sidebar, tabs, back/forward) throws away unsaved edits.
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      unsaved &&
+      !leaving.current &&
+      currentLocation.pathname + currentLocation.search !== nextLocation.pathname + nextLocation.search,
+  );
+  useEffect(() => {
+    if (blocker.state !== "blocked") return;
+    if (window.confirm("You have unsaved changes. Leave without saving?")) blocker.proceed();
+    else blocker.reset();
+  }, [blocker]);
+
+  // Closing or reloading the browser tab gets the browser's own prompt.
+  useEffect(() => {
+    if (!unsaved) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [unsaved]);
 
   // Ctrl+S / Cmd+S saves.
   const onSaveShortcut = useEffectEvent(() => void save());
