@@ -120,6 +120,15 @@ export function CopyIcon() {
   );
 }
 
+export function MailIcon() {
+  return (
+    <svg {...iconProps}>
+      <rect x="2" y="3.5" width="12" height="9" rx="1.5" />
+      <path d="M2.5 5l5.5 4 5.5-4" />
+    </svg>
+  );
+}
+
 export function CheckIcon() {
   return (
     <svg {...iconProps}>

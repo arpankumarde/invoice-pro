@@ -6,11 +6,14 @@ import { asObj, isObj, tidy } from "../app/editor/json.ts";
 import { entryStatus, entryTitle, paymentTitle } from "../app/entries.ts";
 import { downloadPdf } from "../app/generate.ts";
 import { PdfPreview } from "../app/PdfPreview.tsx";
+import { invoiceMailto, invoiceMessage } from "../app/share.ts";
 import {
+  CheckIcon,
   Code,
   CopyIcon,
   DownloadIcon,
   Errors,
+  MailIcon,
   PageSkeleton,
   PaymentBadge,
   PencilIcon,
@@ -31,7 +34,7 @@ export function InvoicePage() {
   const { snapshot, entries } = useOutletContext<Workspace>();
   const { invoiceId } = useParams();
   const entry = entries.find((entry) => entry.id === invoiceId);
-  if (entry) return <InvoiceView snapshot={snapshot} entry={entry} />;
+  if (entry) return <InvoiceView key={entry.id} snapshot={snapshot} entry={entry} />;
   // Invoices that no longer exist land on the latest one.
   if (entries[0]) return <Navigate to={invoicePath(entries[0].id)} replace />;
 
@@ -59,6 +62,27 @@ function InvoiceView({ snapshot, entry }: { snapshot: Snapshot; entry: InvoiceEn
   const brokenPayments = snapshot.payments.filter((payment) => !payment.ok && payment.invoiceIds.includes(entry.id));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
+  const [copied, setCopied] = useState(false);
+  const [emailNote, setEmailNote] = useState<string>();
+
+  const copySummary = async () => {
+    if (!invoice) return;
+    try {
+      await navigator.clipboard.writeText(invoiceMessage(invoice));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setSaveError("Could not copy to the clipboard.");
+    }
+  };
+
+  // mailto: links can't carry attachments, so the PDF is downloaded for attaching.
+  const emailInvoice = () => {
+    if (!invoice || !pdf.bytes) return;
+    downloadPdf(pdf.bytes, invoice.fileName);
+    setEmailNote(`Downloaded ${invoice.fileName}. Attach it to the email that just opened.`);
+    window.location.href = invoiceMailto(invoice);
+  };
 
   // Writes the status into the invoice file the way the editor saves it. Works on invoices with
   // errors too, as long as the file holds a JSON object.
@@ -72,7 +96,7 @@ function InvoiceView({ snapshot, entry }: { snapshot: Snapshot; entry: InvoiceEn
       await saveFile(entry.file, tidy({ ...asObj(record), status: next }, "invoice"));
       await refresh();
     } catch (error) {
-      setSaveError((error as Error).message);
+      setSaveError(`Could not change the status: ${(error as Error).message}`);
     } finally {
       setSaving(false);
     }
@@ -137,6 +161,20 @@ function InvoiceView({ snapshot, entry }: { snapshot: Snapshot; entry: InvoiceEn
                 Duplicate
               </button>
             )}
+            <button type="button" disabled={!invoice} onClick={() => void copySummary()} className={secondaryButton}>
+              {copied ? <CheckIcon /> : <CopyIcon />}
+              {copied ? "Copied" : "Copy summary"}
+            </button>
+            <button
+              type="button"
+              disabled={!pdf.bytes}
+              title={invoice?.billTo?.email ? `Email ${invoice.billTo.email}` : "Open a new email"}
+              onClick={emailInvoice}
+              className={secondaryButton}
+            >
+              <MailIcon />
+              Email
+            </button>
             <button
               type="button"
               disabled={!pdf.bytes}
@@ -167,7 +205,12 @@ function InvoiceView({ snapshot, entry }: { snapshot: Snapshot; entry: InvoiceEn
       <div className="mx-auto max-w-[880px] px-4 py-6 sm:px-8">
         {saveError && (
           <p className="mb-6 rounded-lg bg-red-50 p-4 text-sm text-red-800" role="alert">
-            Could not change the status: {saveError}
+            {saveError}
+          </p>
+        )}
+        {emailNote && (
+          <p className="mb-6 rounded-lg bg-black/[0.04] p-4 text-sm" role="status">
+            {emailNote}
           </p>
         )}
         {brokenPayments.length > 0 && (
