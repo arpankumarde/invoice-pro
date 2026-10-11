@@ -24,11 +24,12 @@ export const router = createBrowserRouter([
       // The Customers tab. "/customers" lands on the first customer.
       { path: "customers/:customerId?", Component: CustomerPage },
 
-      // The Editor tab. Without an id, the invoice and customer routes start a new record.
+      // The editors. Without an id, the invoice and customer routes start a new record. Invoices and
+      // customers are opened from their own pages; your details and settings form the Configuration tab.
       {
         path: "edit",
         children: [
-          { index: true, element: <Navigate to={editPath({ kind: "invoice" })} replace /> },
+          { index: true, element: <Navigate to={editPath({ kind: "business" })} replace /> },
           { path: "invoices/:id?", element: <EditorPage kind="invoice" /> },
           { path: "customers/:id?", element: <EditorPage kind="customer" /> },
           { path: "business", element: <EditorPage kind="business" /> },

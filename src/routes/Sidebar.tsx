@@ -1,8 +1,7 @@
 import { type ReactNode, useState } from "react";
-import { Link, NavLink, useLocation, useMatch } from "react-router";
+import { Link, NavLink, useLocation } from "react-router";
 import { customerSummaries } from "../app/customers.ts";
 import { asObj, text } from "../app/editor/json.ts";
-import type { EditTarget } from "../app/editor/target.ts";
 import { entryStatus, entryTitle, joinParts } from "../app/entries.ts";
 import { isOverdue, owedMinor, todayKey } from "../app/overview.ts";
 import {
@@ -21,10 +20,21 @@ import { customerPath, editPath, invoicePath } from "./paths.ts";
 
 const SECTIONS = [
   { name: "overview", label: "Overview", icon: <HomeIcon /> },
-  { name: "invoices", label: "Invoices", icon: <DocumentIcon /> },
   { name: "customers", label: "Customers", icon: <PeopleIcon /> },
-  { name: "editor", label: "Editor", icon: <SlidersIcon /> },
+  { name: "invoices", label: "Invoices", icon: <DocumentIcon /> },
+  { name: "configuration", label: "Configuration", icon: <SlidersIcon /> },
 ] as const;
+
+type Section = (typeof SECTIONS)[number]["name"];
+
+/** The tab a URL belongs to. The invoice editor has none: it stays in whichever list it was opened from. */
+function sectionOf(pathname: string): Section | undefined {
+  if (pathname === "/") return "overview";
+  if (/^\/(edit\/)?customers(\/|$)/.test(pathname)) return "customers";
+  if (pathname === "/edit/business" || pathname === "/edit/settings") return "configuration";
+  if (/^\/edit\/invoices(\/|$)/.test(pathname)) return undefined;
+  return "invoices";
+}
 
 type InvoiceFilter = "all" | "unpaid" | "overdue" | "draft";
 const FILTER_LABELS: Record<InvoiceFilter, string> = { all: "All", unpaid: "Unpaid", overdue: "Overdue", draft: "Drafts" };
@@ -37,16 +47,17 @@ interface InvoiceQuery {
 
 export function Sidebar({ snapshot, entries }: Workspace) {
   const { pathname } = useLocation();
-  const inEditor = useMatch("/edit/*");
-  const inCustomers = useMatch("/customers/*");
-  const section = pathname === "/" ? "overview" : inEditor ? "editor" : inCustomers ? "customers" : "invoices";
+  const [section, setSection] = useState<Section>(() => sectionOf(pathname) ?? "invoices");
+  // Editing an invoice opened from a customer keeps the Customers tab; from anywhere else it's an invoice's.
+  const current = sectionOf(pathname) ?? (section === "customers" ? "customers" : "invoices");
+  if (current !== section) setSection(current);
   // Each tab reopens its section where it was left. The invoices tab starts on the latest invoice.
   const [lastPath, setLastPath] = useState({
     invoices: invoicePath(entries[0]?.id ?? "latest"),
     customers: "/customers",
-    editor: editPath({ kind: "invoice" }),
+    configuration: editPath({ kind: "business" }),
   });
-  if (section !== "overview" && lastPath[section] !== pathname) setLastPath({ ...lastPath, [section]: pathname });
+  if (current !== "overview" && lastPath[current] !== pathname) setLastPath({ ...lastPath, [current]: pathname });
   const [query, setQuery] = useState<InvoiceQuery>({ text: "", filter: "all" });
 
   const business = asObj(snapshot.raw.business);
@@ -79,7 +90,7 @@ export function Sidebar({ snapshot, entries }: Workspace) {
           <Link
             key={name}
             to={name === "overview" ? "/" : lastPath[name]}
-            aria-current={section === name ? "page" : undefined}
+            aria-current={current === name ? "page" : undefined}
             className="flex items-center justify-center gap-2.5 rounded-md px-1 py-1.5 text-[13px] font-medium max-md:[&_svg]:hidden md:justify-start md:px-2.5 text-muted transition-colors hover:bg-canvas hover:text-ink aria-[current]:bg-canvas aria-[current]:text-ink [&_svg]:opacity-70 aria-[current]:[&_svg]:opacity-100"
           >
             {icon}
@@ -89,15 +100,15 @@ export function Sidebar({ snapshot, entries }: Workspace) {
       </nav>
       <div className="mx-4 border-t border-line" />
       <nav
-        aria-label={section === "customers" ? "Customers" : section === "editor" ? "Records" : "Invoices"}
+        aria-label={current === "invoices" ? "Invoices" : current === "configuration" ? "Configuration" : "Customers"}
         className="flex-1 overflow-y-auto px-3 pb-3 [scrollbar-width:thin] max-md:max-h-72"
       >
-        {section === "invoices" || section === "overview" ? (
+        {current === "invoices" ? (
           <InvoiceNav entries={entries} query={query} onQueryChange={setQuery} />
-        ) : section === "customers" ? (
-          <CustomerNav snapshot={snapshot} entries={entries} />
+        ) : current === "configuration" ? (
+          <ConfigurationNav />
         ) : (
-          <EditorNav snapshot={snapshot} entries={entries} />
+          <CustomerNav snapshot={snapshot} entries={entries} />
         )}
       </nav>
     </aside>
@@ -260,9 +271,18 @@ function InvoiceNav({
 
 function CustomerNav({ snapshot, entries }: Workspace) {
   const customers = customerSummaries(snapshot, entries);
-  if (customers.length === 0) return null;
   return (
     <NavGroup title="Customers">
+      <NavItem
+        to={editPath({ kind: "customer" })}
+        end
+        title={
+          <>
+            <PlusIcon />
+            New customer
+          </>
+        }
+      />
       {customers.map((customer) => {
         const due = customer.balances.filter((balance) => balance.due);
         return (
@@ -285,39 +305,12 @@ function CustomerNav({ snapshot, entries }: Workspace) {
   );
 }
 
-function EditorNav({ snapshot, entries }: Workspace) {
-  const item = (target: EditTarget, title: ReactNode, subtitle?: string) => {
-    const to = editPath(target);
-    return <NavItem key={to} to={to} end title={title} subtitle={subtitle} />;
-  };
-  const customers = Object.entries(
-    snapshot.raw.customers && typeof snapshot.raw.customers === "object" ? snapshot.raw.customers : {},
-  );
-  const isNew = (label: string) => (
-    <>
-      <PlusIcon />
-      {label}
-    </>
-  );
+/** Your own details and the settings. Invoices and customers are edited from their own pages. */
+function ConfigurationNav() {
   return (
-    <>
-      <NavGroup title="Invoices">
-        {item({ kind: "invoice" }, isNew("New invoice"))}
-        {entries.map((entry) =>
-          item({ kind: "invoice", file: entry.file }, entryTitle(entry), entry.ok ? entry.invoice.summary.customer : "Needs fixing"),
-        )}
-      </NavGroup>
-      <NavGroup title="Customers">
-        {item({ kind: "customer" }, isNew("New customer"))}
-        {customers.map(([id, value]) => {
-          const name = (value as { name?: unknown } | null)?.name;
-          return item({ kind: "customer", id }, id, typeof name === "string" ? name : undefined);
-        })}
-      </NavGroup>
-      <NavGroup title="You">
-        {item({ kind: "business" }, "Your details")}
-        {item({ kind: "settings" }, "Settings", "Colours, format, PDF permissions")}
-      </NavGroup>
-    </>
+    <NavGroup title="Configuration">
+      <NavItem to={editPath({ kind: "business" })} end title="Your details" />
+      <NavItem to={editPath({ kind: "settings" })} end title="Settings" subtitle="Colours, format, PDF permissions" />
+    </NavGroup>
   );
 }

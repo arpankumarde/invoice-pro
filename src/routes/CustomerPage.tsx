@@ -34,7 +34,7 @@ export function CustomerPage() {
   return (
     <div className="mx-auto max-w-md px-6 py-24 text-center">
       <h2 className="text-lg font-semibold">No customers yet</h2>
-      <p className="mt-2 text-sm text-muted">Add one in the editor, then bill invoices to them.</p>
+      <p className="mt-2 text-sm text-muted">Add one, then bill invoices to them.</p>
       <Link to={editPath({ kind: "customer" })} className={`${primaryButton} mt-6`}>
         <PlusIcon />
         New customer
@@ -138,6 +138,9 @@ function CustomerView({
                   <th className="px-4 py-2.5 font-medium max-sm:hidden">Issued</th>
                   <th className="px-4 py-2.5 font-medium">Status</th>
                   <th className="px-4 py-2.5 text-right font-medium">Amount</th>
+                  <th className="w-0 px-2 py-2.5">
+                    <span className="sr-only">Edit</span>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -164,6 +167,16 @@ function CustomerView({
                       <td className="p-0 text-right tabular-nums">
                         <Link to={to} className="block px-4 py-3" tabIndex={-1}>
                           {entry.ok ? entry.invoice.summary.amountDue : <span className="text-red-700">Needs fixing</span>}
+                        </Link>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <Link
+                          to={editPath({ kind: "invoice", file: entry.file })}
+                          aria-label={`Edit invoice ${entryTitle(entry)}`}
+                          title="Edit invoice"
+                          className="grid size-8 place-items-center rounded-md text-muted hover:bg-black/[0.04] hover:text-ink"
+                        >
+                          <PencilIcon className="shrink-0" />
                         </Link>
                       </td>
                     </tr>
